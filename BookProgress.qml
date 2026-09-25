@@ -59,7 +59,8 @@ ColumnLayout {
       anchors.left: parent.left
       anchors.top: parent.top
       anchors.bottom: parent.bottom
-      width: parent.width * (root.safeTotal > 0 ? root.safeElapsed / root.safeTotal : 0)
+      width: root.safeElapsed > 0 && root.safeTotal > 0
+        ? Math.min(parent.width, Math.max(parent.height, parent.width * root.safeElapsed / root.safeTotal)) : 0
       radius: height / 2
       color: Color.accent
     }

@@ -50,11 +50,14 @@ class QmlContractTests(unittest.TestCase):
         self.assertEqual(QML.count('text: "Audiobook total  " + Model.formatTime(root.player.bookDuration)'), 2)
         self.assertIn('Number(root.player.bookDuration || 0) > 0', QML)
 
-    def test_book_progress_is_visible_in_player_and_book_rows(self):
-        self.assertEqual(QML.count("BookProgress {"), 3)
+    def test_book_progress_is_visible_in_player_book_rows_and_chapter_view(self):
+        self.assertEqual(QML.count("BookProgress {"), 4)
         self.assertIn("progressTotal: parsed.bookTotal", QML)
+        self.assertIn('currentBookProgress = parsed.book', QML)
+        self.assertIn('text: "Book progress · " + Model.formatTime(root.currentBookProgress.progressTotal) + " total"', QML)
+        self.assertIn('String(parsed.track.albumKey || "") === currentParentKey', QML)
         self.assertIn('text: root.percent + "%"', BOOK_PROGRESS)
-        self.assertIn("root.safeElapsed / root.safeTotal", BOOK_PROGRESS)
+        self.assertIn("parent.width * root.safeElapsed / root.safeTotal", BOOK_PROGRESS)
         self.assertIn('"Heard " + Model.formatTime(root.safeElapsed)', BOOK_PROGRESS)
         self.assertIn('"Left " + Model.formatTime(root.remaining)', BOOK_PROGRESS)
         self.assertIn('Accessible.role: Accessible.ProgressBar', BOOK_PROGRESS)

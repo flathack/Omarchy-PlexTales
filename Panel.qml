@@ -21,6 +21,7 @@ Panel {
   property string currentParentKey: ""
   property string currentParentKind: ""
   property string currentParentTitle: ""
+  property var currentBookProgress: ({})
   property string query: ""
   property string errorText: ""
   property bool loading: false
@@ -287,6 +288,15 @@ Panel {
           })
         })
       }
+      if (parsed.track && view === "children" && currentParentKind === "album"
+          && String(parsed.track.albumKey || "") === currentParentKey && Number(parsed.bookTotal || 0) > 0) {
+        currentBookProgress = Object.assign({}, currentBookProgress, {
+          progressTotal: parsed.bookTotal,
+          progressElapsed: parsed.bookElapsed,
+          progressRemaining: parsed.bookRemaining,
+          progressPercent: parsed.bookPercent
+        })
+      }
       if (parsed.track && (parsed.connected !== false || demoMode) && !miniActive) requestArtwork(parsed.track.artSource)
       if (pendingOpenView && opened && !miniActive) {
         if (pendingOpenViewNeedsRetry) {
@@ -390,6 +400,7 @@ Panel {
     currentParentKey = ""
     currentParentKind = ""
     currentParentTitle = ""
+    currentBookProgress = ({})
     backStack = []
     if (nextView === "queue") {
       runData("queue", command(["queue"]))
@@ -410,6 +421,7 @@ Panel {
     currentParentKey = ""
     currentParentKind = ""
     currentParentTitle = ""
+    currentBookProgress = ({})
     runData("search", command(["search", value, "--limit", "35"]))
   }
 
@@ -423,6 +435,7 @@ Panel {
     currentParentKey = String(item.key || "")
     currentParentKind = String(item.type || "album")
     currentParentTitle = String(item.title || "Collection")
+    currentBookProgress = currentParentKind === "album" ? item : ({})
     view = "children"
     runData("children", command(["children", currentParentKind, currentParentKey]))
   }
@@ -439,6 +452,7 @@ Panel {
     currentParentKey = String(previous.parentKey || "")
     currentParentKind = String(previous.parentKind || "")
     currentParentTitle = String(previous.title || "")
+    currentBookProgress = ({})
     pendingSelectedIndex = Number(previous.selectedIndex || 0)
     var args = Model.navigationArgs(previous, setting("recentAlbumCount", 20), setting("libraryItemCount", 100))
     runData(view, command(args))
@@ -466,6 +480,8 @@ Panel {
     loading = false
     if (!parsed) { errorText = "Plex returned unreadable data."; return }
     items = Model.safeArray(parsed.items)
+    if (view === "children" && currentParentKind === "album" && parsed.book)
+      currentBookProgress = parsed.book
     if (parsed.stale === true) errorText = parsed.warning || "Showing cached library data while Plex is offline."
     selectedIndex = pendingSelectedIndex >= 0
       ? Math.max(0, Math.min(items.length - 1, pendingSelectedIndex)) : 0
@@ -2158,6 +2174,29 @@ Panel {
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
+        }
+      }
+
+      ColumnLayout {
+        visible: !root.helpVisible && root.plexConnected && root.view === "children"
+          && root.currentParentKind === "album" && Number(root.currentBookProgress.progressTotal || 0) > 0
+        width: parent.width
+        spacing: Style.space(5)
+        Text {
+          textFormat: Text.PlainText
+          text: "Book progress · " + Model.formatTime(root.currentBookProgress.progressTotal) + " total"
+          color: root.foreground
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
+        BookProgress {
+          Layout.fillWidth: true
+          total: Number(root.currentBookProgress.progressTotal || 0)
+          elapsed: Number(root.currentBookProgress.progressElapsed || 0)
+          foreground: root.foreground
+          muted: root.dim
+          fontFamily: root.fontFamily
         }
       }
 

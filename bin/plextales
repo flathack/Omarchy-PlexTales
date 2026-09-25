@@ -39,7 +39,7 @@ SOCKET_FILE = CACHE_DIR / "mpv.sock"
 DATA_CACHE_DIR = CACHE_DIR / "data"
 ART_CACHE_DIR = CACHE_DIR / "art"
 APP_NAME = "PlexTales"
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 PROGRESS_MAX_BYTES = 1024 * 1024
 PROGRESS_MAX_BOOKS = 1000
 PLEX_AUTH_URL = "https://plex.tv/api/v2"
@@ -2266,7 +2266,13 @@ def demo_dispatch(args: argparse.Namespace) -> Any:
         return {"items": items, "library": "Demo audiobooks", "stale": False, "demo": True}
     if args.command in ("tracks", "children"):
         child_kind = "album" if getattr(args, "kind", "") == "artist" else "track"
-        return {"items": demo_items(child_kind), "demo": True}
+        result = {"items": demo_items(child_kind), "demo": True}
+        if args.command == "children" and getattr(args, "kind", "") == "album":
+            total = sum(safe_float(track.get("duration")) for track in result["items"])
+            result["book"] = {"type": "album", "key": args.key,
+                              "progressTotal": total, "progressElapsed": 0,
+                              "progressRemaining": total, "progressPercent": 0}
+        return result
     if args.command in ("health", "doctor"):
         return {"ok": True, "code": "demo", "message": "Demo mode — no Plex connection is used.", "demo": True}
     if args.command == "cache-clean":
@@ -2390,6 +2396,8 @@ def main() -> int:
             result = cached_items(config, f"children-{args.kind}-{args.key}", lambda: loader(config, args.key))
             if args.kind == "artist":
                 result["items"] = decorate_book_items(config, result["items"])
+            elif args.kind == "album":
+                result["book"] = decorate_book_items(config, [{"type": "album", "key": args.key}])[0]
             result.update({"kind": args.kind, "key": args.key})
         elif args.command == "play":
             result = play(load_config(), args.track, args.album, args.playlist, args.shuffle)
