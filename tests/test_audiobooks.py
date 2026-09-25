@@ -81,6 +81,28 @@ class AudiobookProgressTests(unittest.TestCase):
         self.assertEqual(status["track"]["key"], "chapter-2")
         self.assertEqual(status["position"], 3661.5)
 
+    def test_book_total_includes_chapters_before_selected_chapter(self):
+        rows = [{"ratingKey": str(index), "type": "track", "duration": duration}
+                for index, duration in enumerate((60000, 120000, 180000), 1)]
+        queue = [{"key": str(index), "albumKey": "book-1", "duration": duration / 1000}
+                 for index, duration in ((2, 120000), (3, 180000), (1, 60000))]
+        with mock.patch.object(player, "album_track_rows", return_value=rows), \
+             mock.patch.object(player, "prepare_rows", return_value=(queue, ["a", "b", "c"])):
+            prepared, _ = player.prepare_collection(self.config, "album", "book-1", "2")
+        self.assertEqual(prepared[0]["_bookDuration"], 360)
+        self.assertEqual(player.book_total_duration(prepared, prepared[0]), 360)
+        legacy = [{key: value for key, value in item.items() if key != "_bookDuration"} for item in queue]
+        self.assertEqual(player.book_total_duration(legacy, legacy[0]), 360)
+        self.assertEqual(player.book_total_duration([{**legacy[0], "albumKey": "other"}, legacy[1]], legacy[1]), 0)
+
+    def test_playing_chapter_from_search_loads_its_whole_book(self):
+        with mock.patch.object(player, "mpv_running", return_value=False), \
+             mock.patch.object(player, "raw_track", return_value=(self.track, "/part")), \
+             mock.patch.object(player, "prepare_collection", return_value=([self.track], ["url"])) as prepare, \
+             mock.patch.object(player, "activate_queue", return_value={"playing": True}):
+            player.play(self.config, "chapter-2", None)
+        self.assertEqual(prepare.call_args.args[1:4], ("album", "book-1", "chapter-2"))
+
 
 if __name__ == "__main__":
     unittest.main()

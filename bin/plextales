@@ -39,7 +39,7 @@ SOCKET_FILE = CACHE_DIR / "mpv.sock"
 DATA_CACHE_DIR = CACHE_DIR / "data"
 ART_CACHE_DIR = CACHE_DIR / "art"
 APP_NAME = "PlexTales"
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 PROGRESS_MAX_BYTES = 1024 * 1024
 PROGRESS_MAX_BOOKS = 1000
 PLEX_AUTH_URL = "https://plex.tv/api/v2"
@@ -1501,10 +1501,14 @@ def prepare_collection(config: dict[str, Any], kind: str, key: str,
     rows = album_track_rows(config, key) if kind == "album" else playlist_track_rows(config, key)
     if not rows:
         raise PlayerError("This collection has no playable tracks.", "empty-collection")
+    book_duration = sum(max(0, safe_float(row.get("duration"))) for row in rows) / 1000 if kind == "album" else 0
     selected = next((index for index, row in enumerate(rows)
                      if str(row.get("ratingKey", row.get("key", ""))) == selected_key), 0)
     rows = [*rows[selected:], *rows[:selected]][:PLAYBACK_QUEUE_MAX_ITEMS]
     queue, urls = prepare_rows(config, rows)
+    if book_duration > 0:
+        for item in queue:
+            item["_bookDuration"] = book_duration
     if shuffle and len(queue) > 1:
         combined = list(zip(queue[1:], urls[1:]))
         random.SystemRandom().shuffle(combined)
@@ -1629,8 +1633,11 @@ def play(config: dict[str, Any], track_key: str, album_key: str | None,
         queue, urls = prepare_collection(config, kind, str(key), track_key, shuffle)
     else:
         item, part = raw_track(config, track_key)
-        prepared, url = finish_prepared_item(config, item, part)
-        queue, urls = [prepared], [url]
+        if item.get("albumKey"):
+            queue, urls = prepare_collection(config, "album", str(item["albumKey"]), track_key, shuffle)
+        else:
+            prepared, url = finish_prepared_item(config, item, part)
+            queue, urls = [prepared], [url]
     progress = book_progress(config, str(album_key or queue[0].get("albumKey", "")))
     start = safe_float(progress.get("position")) if progress.get("trackKey") == queue[0].get("key") else 0
     return activate_queue(config, queue, urls, shuffle, start_position=start)
@@ -1770,6 +1777,18 @@ def property_or(name: str, fallback: Any) -> Any:
         return fallback
 
 
+def book_total_duration(queue: list[dict[str, Any]], track: dict[str, Any] | None) -> float:
+    if not track:
+        return 0.0
+    stored = safe_float(track.get("_bookDuration"))
+    if stored > 0:
+        return stored
+    book_key = str(track.get("albumKey", ""))
+    if not book_key or not queue or any(str(item.get("albumKey", "")) != book_key for item in queue):
+        return 0.0
+    return sum(max(0.0, safe_float(item.get("duration"))) for item in queue)
+
+
 def status(config: dict[str, Any] | None = None, force_timeline: bool = False) -> dict[str, Any]:
     config = config if config is not None else load_config(False, include_disabled=True)
     configured = bool(config)
@@ -1787,6 +1806,7 @@ def status(config: dict[str, Any] | None = None, force_timeline: bool = False) -
                   "track": public_item(track),
                   "position": safe_float(bookmark.get("position")) if bookmark.get("trackKey") == (track or {}).get("key") else 0,
                   "duration": (track.get("duration", 0) if track else 0),
+                  "bookDuration": book_total_duration(queue, track),
                   "volume": max(0, min(130, safe_float(state.get("volume"), 100))),
                   "speed": safe_float(state.get("speed"), 1.0),
                   "shuffle": bool(state.get("shuffle")), "repeat": state.get("repeat", "off"),
@@ -1805,6 +1825,7 @@ def status(config: dict[str, Any] | None = None, force_timeline: bool = False) -
             "track": public_item(track),
             "position": safe_float(snapshot.get("time-pos")),
             "duration": safe_float(snapshot.get("duration"), safe_float(track.get("duration")) if track else 0),
+            "bookDuration": book_total_duration(queue, track),
             "volume": safe_float(snapshot.get("volume"), 100),
             "speed": safe_float(state.get("speed"), 1.0),
             "shuffle": bool(state.get("shuffle")),
@@ -2043,7 +2064,8 @@ def demo_dispatch(args: argparse.Namespace) -> Any:
     if args.command in ("status", "control", "play", "play-collection"):
         tracks = demo_items("track")
         return {"configured": True, "connected": True, "playing": True, "paused": False, "track": tracks[1], "position": 72,
-                "duration": tracks[1]["duration"], "volume": 84, "shuffle": False, "repeat": "off", "speed": 1.25,
+                "duration": tracks[1]["duration"], "bookDuration": sum(track["duration"] for track in tracks),
+                "volume": 84, "shuffle": False, "repeat": "off", "speed": 1.25,
                 "queueLength": len(tracks), "queueIndex": 1, "demo": True}
     if args.command == "queue":
         items = demo_items("track")

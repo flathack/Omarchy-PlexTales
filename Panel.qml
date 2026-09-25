@@ -1281,6 +1281,18 @@ Panel {
         }
       }
 
+      Text {
+        textFormat: Text.PlainText
+        visible: !!root.activeTrack && root.plexConnected && Number(root.player.bookDuration || 0) > 0
+        width: parent.width
+        horizontalAlignment: Text.AlignRight
+        text: "Audiobook total  " + Model.formatTime(root.player.bookDuration)
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        Accessible.name: text
+      }
+
       RowLayout {
         width: parent.width
         spacing: Style.space(8)
@@ -1543,6 +1555,19 @@ Panel {
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            visible: root.activeTrack !== null && root.plexConnected && !root.helpVisible
+              && Number(root.player.bookDuration || 0) > 0
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignRight
+            text: "Audiobook total  " + Model.formatTime(root.player.bookDuration)
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            Accessible.name: text
           }
 
           RowLayout {

@@ -10,6 +10,7 @@ Create a **Music** library in Plex for audiobooks. PlexTales treats an artist as
 - Book progress is saved per book and chapter on status polls (about every 3 seconds while the panel is open and every 10 seconds during background playback), and immediately on pause, seek, chapter change, or shutdown.
 - Progress is stored in `${XDG_CONFIG_HOME:-~/.config}/plextales/progress.json`, outside the disposable artwork and library cache. It survives app restarts, cache cleanup, and Plex token refreshes. Progress is local to this computer and library; it is not synchronized to other Plex clients.
 - The player has 30-second back/forward controls, a chapter seek bar with hour display, and selectable 1×, 1.25×, 1.5×, 1.75×, and 2× speed. Speed is remembered locally.
+- The player shows the current chapter length and, underneath it, the total length of the audiobook across its chapters.
 - Plex browser sign-in, cover art, search, queue, history, favorites, mini player, hardware media keys through `mpv-mpris`, system volume, and dark/light Omarchy themes are inherited from Tunarchy.
 
 ## Requirements and installation

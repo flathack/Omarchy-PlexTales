@@ -45,6 +45,10 @@ class QmlContractTests(unittest.TestCase):
                        'control("volume"', 'control("speed"'):
             self.assertIn(action, QML)
 
+    def test_full_and_mini_players_show_total_audiobook_length(self):
+        self.assertEqual(QML.count('text: "Audiobook total  " + Model.formatTime(root.player.bookDuration)'), 2)
+        self.assertIn('Number(root.player.bookDuration || 0) > 0', QML)
+
     def test_missing_covers_use_theme_aware_placeholder(self):
         self.assertIn("readonly property string activeThumb", QML)
         self.assertIn("id: barCover", QML)
