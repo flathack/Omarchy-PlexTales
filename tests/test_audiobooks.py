@@ -22,12 +22,13 @@ class AudiobookProgressTests(unittest.TestCase):
         self.patches = [
             mock.patch.object(player, "PROGRESS_FILE", base / "config" / "progress.json"),
             mock.patch.object(player, "STATE_FILE", base / "cache" / "state.json"),
+            mock.patch.object(player, "DATA_CACHE_DIR", base / "cache" / "data"),
         ]
         for patch in self.patches:
             patch.start()
             self.addCleanup(patch.stop)
         self.config = {"server": "https://plex.example", "section": "7", "clientIdentifier": "client",
-                       "token": "first-token"}
+                       "token": "first-token", "connectionEnabled": False}
         self.track = {"key": "chapter-2", "albumKey": "book-1", "title": "Chapter two",
                       "album": "A Long Story", "artist": "Jane Author", "duration": 7200}
 
@@ -85,15 +86,29 @@ class AudiobookProgressTests(unittest.TestCase):
         rows = [{"ratingKey": str(index), "type": "track", "duration": duration}
                 for index, duration in enumerate((60000, 120000, 180000), 1)]
         queue = [{"key": str(index), "albumKey": "book-1", "duration": duration / 1000}
-                 for index, duration in ((2, 120000), (3, 180000), (1, 60000))]
+                 for index, duration in ((1, 60000), (2, 120000), (3, 180000))]
         with mock.patch.object(player, "album_track_rows", return_value=rows), \
              mock.patch.object(player, "prepare_rows", return_value=(queue, ["a", "b", "c"])):
             prepared, _ = player.prepare_collection(self.config, "album", "book-1", "2")
         self.assertEqual(prepared[0]["_bookDuration"], 360)
+        self.assertEqual([item["_bookOffset"] for item in prepared], [0, 60, 180])
         self.assertEqual(player.book_total_duration(prepared, prepared[0]), 360)
         legacy = [{key: value for key, value in item.items() if key != "_bookDuration"} for item in queue]
         self.assertEqual(player.book_total_duration(legacy, legacy[0]), 360)
         self.assertEqual(player.book_total_duration([{**legacy[0], "albumKey": "other"}, legacy[1]], legacy[1]), 0)
+
+    def test_resuming_middle_chapter_keeps_previous_chapters_in_order(self):
+        player.checkpoint_progress(self.config, self.track, 30, 7200, True, 10000, 3630)
+        queue = [{"key": "chapter-1", "albumKey": "book-1"}, self.track,
+                 {"key": "chapter-3", "albumKey": "book-1"}]
+        with mock.patch.object(player, "mpv_running", return_value=False), \
+             mock.patch.object(player, "prepare_collection", return_value=(queue, ["a", "b", "c"])), \
+             mock.patch.object(player, "activate_queue", return_value={"playing": True}) as activate:
+            player.play_collection(self.config, "album", "book-1")
+        self.assertEqual([item["key"] for item in activate.call_args.args[1]],
+                         ["chapter-1", "chapter-2", "chapter-3"])
+        self.assertEqual(activate.call_args.kwargs["start_index"], 1)
+        self.assertEqual(activate.call_args.kwargs["start_position"], 30)
 
     def test_playing_chapter_from_search_loads_its_whole_book(self):
         with mock.patch.object(player, "mpv_running", return_value=False), \
@@ -102,6 +117,51 @@ class AudiobookProgressTests(unittest.TestCase):
              mock.patch.object(player, "activate_queue", return_value={"playing": True}):
             player.play(self.config, "chapter-2", None)
         self.assertEqual(prepare.call_args.args[1:4], ("album", "book-1", "chapter-2"))
+
+    def test_book_progress_crosses_chapter_boundaries_and_rewinds(self):
+        second = {**self.track, "_bookDuration": 10000, "_bookOffset": 3600}
+        at_ten_minutes = player.book_progress_position([second], second, 600)
+        self.assertEqual(at_ten_minutes["bookElapsed"], 4200)
+        self.assertEqual(at_ten_minutes["bookRemaining"], 5800)
+        self.assertEqual(at_ten_minutes["bookPercent"], 42)
+        self.assertEqual(player.book_progress_position([second], second, 100)["bookPercent"], 37)
+
+    def test_resume_and_book_list_expose_persisted_whole_book_progress(self):
+        player.checkpoint_progress(self.config, self.track, 600, 7200, True, 10000, 4200)
+        resumed = player.continue_books(self.config, 10)[0]
+        self.assertEqual((resumed["progressElapsed"], resumed["progressRemaining"], resumed["progressPercent"]),
+                         (4200, 5800, 42))
+        book = {"type": "album", "key": "book-1", "title": "A Long Story"}
+        self.config["connectionEnabled"] = True
+        with mock.patch.object(player, "album_track_rows", return_value=[{"ratingKey": "one", "duration": 180000}]):
+            decorated = player.decorate_book_items(self.config, [book, {"type": "album", "key": "unstarted"}])
+        self.assertEqual(decorated[0]["progressPercent"], 42)
+        self.assertEqual(decorated[1]["progressPercent"], 0)
+        self.assertEqual(decorated[1]["progressRemaining"], 180)
+
+    def test_older_chapter_bookmark_is_hydrated_once(self):
+        player.checkpoint_progress(self.config, self.track, 30, 7200, True)
+        self.config["connectionEnabled"] = True
+        rows = [{"ratingKey": "chapter-1", "duration": 60000},
+                {"ratingKey": "chapter-2", "duration": 120000}]
+        with mock.patch.object(player, "album_track_rows", return_value=rows) as fetch:
+            first = player.continue_books(self.config, 10)[0]
+            second = player.continue_books(self.config, 10)[0]
+        fetch.assert_called_once_with(self.config, "book-1")
+        self.assertEqual(first["progressTotal"], 180)
+        self.assertEqual(first["progressElapsed"], 90)
+        self.assertEqual(first["progressRemaining"], 90)
+        self.assertEqual(second["progressPercent"], 50)
+
+    def test_book_outline_is_cached_after_first_fetch(self):
+        self.config["connectionEnabled"] = True
+        rows = [{"ratingKey": "chapter-1", "duration": 60000}]
+        with mock.patch.object(player, "album_track_rows", return_value=rows) as fetch:
+            first = player.cached_book_outline(self.config, "book-1")
+            self.config["connectionEnabled"] = False
+            second = player.cached_book_outline(self.config, "book-1")
+        fetch.assert_called_once_with(self.config, "book-1")
+        self.assertEqual(first, second)
 
 
 if __name__ == "__main__":

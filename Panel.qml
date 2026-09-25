@@ -273,6 +273,20 @@ Panel {
     if (parsed) {
       var wasConnected = plexConnected
       player = parsed
+      if (parsed.track && parsed.track.albumKey && Number(parsed.bookTotal || 0) > 0 && items.length > 0) {
+        var bookKey = String(parsed.track.albumKey)
+        items = items.map(function(item) {
+          if (item.type !== "album" || String(item.key) !== bookKey) return item
+          return Object.assign({}, item, {
+            progressChapter: parsed.track.title,
+            progressPosition: parsed.position,
+            progressTotal: parsed.bookTotal,
+            progressElapsed: parsed.bookElapsed,
+            progressRemaining: parsed.bookRemaining,
+            progressPercent: parsed.bookPercent
+          })
+        })
+      }
       if (parsed.track && (parsed.connected !== false || demoMode) && !miniActive) requestArtwork(parsed.track.artSource)
       if (pendingOpenView && opened && !miniActive) {
         if (pendingOpenViewNeedsRetry) {
@@ -1293,6 +1307,15 @@ Panel {
         Accessible.name: text
       }
 
+      BookProgress {
+        width: parent.width
+        total: Number(root.player.bookTotal || 0)
+        elapsed: Number(root.player.bookElapsed || 0)
+        foreground: root.foreground
+        muted: root.dim
+        fontFamily: root.fontFamily
+      }
+
       RowLayout {
         width: parent.width
         spacing: Style.space(8)
@@ -1568,6 +1591,17 @@ Panel {
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             Accessible.name: text
+          }
+
+          BookProgress {
+            Layout.fillWidth: true
+            visible: root.activeTrack !== null && root.plexConnected && !root.helpVisible
+              && Number(root.player.bookTotal || 0) > 0
+            total: Number(root.player.bookTotal || 0)
+            elapsed: Number(root.player.bookElapsed || 0)
+            foreground: root.foreground
+            muted: root.dim
+            fontFamily: root.fontFamily
           }
 
           RowLayout {
@@ -2174,7 +2208,7 @@ Panel {
           required property var modelData
           required property int index
           width: ListView.view.width
-          height: Style.space(54)
+          height: Style.space(modelData.type === "album" && Number(modelData.progressTotal || 0) > 0 ? 84 : 54)
           hasCursor: root.selectedIndex === index
           foreground: root.foreground
           Accessible.role: Accessible.ListItem
@@ -2239,6 +2273,14 @@ Panel {
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 elide: Text.ElideRight
+              }
+              BookProgress {
+                Layout.fillWidth: true
+                total: Number(mediaRow.modelData.progressTotal || 0)
+                elapsed: Number(mediaRow.modelData.progressElapsed || 0)
+                foreground: root.foreground
+                muted: root.dim
+                fontFamily: root.fontFamily
               }
             }
             Text {

@@ -828,12 +828,13 @@ class PlayerTests(unittest.TestCase):
             result = player.play({"server": "http://plex", "token": "tok"}, "2", "album")
         raw.assert_not_called()
         loads = batch.call_args.args[0]
-        self.assertIn("/part/2", loads[0][1])
+        self.assertIn("/part/1", loads[0][1])
         self.assertEqual(loads[0][2], "replace")
+        self.assertIn("/part/2", loads[1][1])
         self.assertEqual(loads[1][2], "append")
         self.assertIn(mock.call(["set_property", "pause", False], True), command.call_args_list)
-        self.assertIn(mock.call(["set_property", "playlist-pos", 0], True), command.call_args_list)
-        self.assertEqual([item["key"] for item in player.state_data()["queue"]], ["2", "1"])
+        self.assertIn(mock.call(["set_property", "playlist-pos", 1], True), command.call_args_list)
+        self.assertEqual([item["key"] for item in player.state_data()["queue"]], ["1", "2"])
         self.assertTrue(result["playing"])
 
     def test_collection_resolution_failure_does_not_mutate_player_or_state(self):
@@ -931,7 +932,8 @@ class PlayerTests(unittest.TestCase):
              mock.patch.object(player, "activate_queue", return_value={"playing": True}) as activate, \
              mock.patch.object(player, "queue_view", return_value={"items": []}):
             player.queue_action("play", index=1)
-        self.assertEqual([item["key"] for item in activate.call_args.args[1]], ["2", "1"])
+        self.assertEqual([item["key"] for item in activate.call_args.args[1]], ["1", "2"])
+        self.assertEqual(activate.call_args.kwargs["start_index"], 1)
 
     def test_stopped_play_next_activates_exact_persisted_order(self):
         config = {"server": "http://plex", "token": "tok", "section": "4"}
@@ -1326,7 +1328,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertEqual(manifest["schemaVersion"], 1)
         self.assertIn("bar-widget", manifest["kinds"])
         self.assertTrue((ROOT / manifest["entryPoints"]["barWidget"]).is_file())
-        self.assertEqual(manifest["version"], "0.1.1")
+        self.assertEqual(manifest["version"], "0.2.0")
         self.assertIn(f'APP_VERSION = "{manifest["version"]}"', HELPER.read_text(encoding="utf-8"))
         self.assertTrue((ROOT / "assets" / "book.svg").is_file())
 

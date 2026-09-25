@@ -7,6 +7,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 QML = (ROOT / "Panel.qml").read_text(encoding="utf-8")
 MODEL = (ROOT / "Model.js").read_text(encoding="utf-8")
 PLACEHOLDER = (ROOT / "CoverPlaceholder.qml").read_text(encoding="utf-8")
+BOOK_PROGRESS = (ROOT / "BookProgress.qml").read_text(encoding="utf-8")
 
 
 def text_blocks(source):
@@ -48,6 +49,15 @@ class QmlContractTests(unittest.TestCase):
     def test_full_and_mini_players_show_total_audiobook_length(self):
         self.assertEqual(QML.count('text: "Audiobook total  " + Model.formatTime(root.player.bookDuration)'), 2)
         self.assertIn('Number(root.player.bookDuration || 0) > 0', QML)
+
+    def test_book_progress_is_visible_in_player_and_book_rows(self):
+        self.assertEqual(QML.count("BookProgress {"), 3)
+        self.assertIn("progressTotal: parsed.bookTotal", QML)
+        self.assertIn('text: root.percent + "%"', BOOK_PROGRESS)
+        self.assertIn("root.safeElapsed / root.safeTotal", BOOK_PROGRESS)
+        self.assertIn('"Heard " + Model.formatTime(root.safeElapsed)', BOOK_PROGRESS)
+        self.assertIn('"Left " + Model.formatTime(root.remaining)', BOOK_PROGRESS)
+        self.assertIn('Accessible.role: Accessible.ProgressBar', BOOK_PROGRESS)
 
     def test_missing_covers_use_theme_aware_placeholder(self):
         self.assertIn("readonly property string activeThumb", QML)
