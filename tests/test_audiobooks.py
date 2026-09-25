@@ -70,6 +70,17 @@ class AudiobookProgressTests(unittest.TestCase):
         self.assertEqual(status["speed"], 1.25)
         self.assertEqual(player.book_progress(self.config, "book-1")["position"], 1234.5)
 
+    def test_stopped_status_shows_bookmarked_chapter(self):
+        player.checkpoint_progress(self.config, self.track, 3661.5, 7200, True)
+        first = {**self.track, "key": "chapter-1", "title": "Chapter one"}
+        state = {"queue": [first, self.track], "speed": 1.0, "queueNamespace": player.cache_namespace(self.config)}
+        with mock.patch.object(player, "mpv_properties", return_value=None), \
+             mock.patch.object(player, "sync_queue_from_mpv", return_value=state), \
+             mock.patch.object(player, "update_timeline"):
+            status = player.status(self.config)
+        self.assertEqual(status["track"]["key"], "chapter-2")
+        self.assertEqual(status["position"], 3661.5)
+
 
 if __name__ == "__main__":
     unittest.main()

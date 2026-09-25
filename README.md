@@ -7,7 +7,7 @@ PlexTales is an unofficial Omarchy bar widget for audiobooks stored on a Plex Me
 Create a **Music** library in Plex for audiobooks. PlexTales treats an artist as an author, an album as a book, and its tracks as chapters. Name and order chapters in Plex as you want them played. A book can consist of one long file or many chapter files. Plex libraries of type Movie, Show, or Photo are not supported.
 
 - **Resume** lists books with saved progress. Select a book and press its play button to continue at the saved chapter and second.
-- Book progress is saved per book and chapter at least every five seconds while the widget polls the player, and immediately on pause, seek, chapter change, or shutdown.
+- Book progress is saved per book and chapter on status polls (about every 3 seconds while the panel is open and every 10 seconds during background playback), and immediately on pause, seek, chapter change, or shutdown.
 - Progress is stored in `${XDG_CONFIG_HOME:-~/.config}/plextales/progress.json`, outside the disposable artwork and library cache. It survives app restarts, cache cleanup, and Plex token refreshes. Progress is local to this computer and library; it is not synchronized to other Plex clients.
 - The player has 30-second back/forward controls, a chapter seek bar with hour display, and selectable 1×, 1.25×, 1.5×, 1.75×, and 2× speed. Speed is remembered locally.
 - Plex browser sign-in, cover art, search, queue, history, favorites, mini player, hardware media keys through `mpv-mpris`, system volume, and dark/light Omarchy themes are inherited from Tunarchy.

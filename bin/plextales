@@ -1781,6 +1781,8 @@ def status(config: dict[str, Any] | None = None, force_timeline: bool = False) -
     if snapshot is None:
         track = queue[0] if queue else None
         bookmark = book_progress(config, str(track.get("albumKey", ""))) if track and config else {}
+        if bookmark and isinstance(queue, list):
+            track = next((item for item in queue if item.get("key") == bookmark.get("trackKey")), track)
         result = {"configured": configured, "connected": connected, "playing": False, "paused": False,
                   "track": public_item(track),
                   "position": safe_float(bookmark.get("position")) if bookmark.get("trackKey") == (track or {}).get("key") else 0,
