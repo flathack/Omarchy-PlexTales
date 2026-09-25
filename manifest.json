@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.flathack.plextales",
+  "name": "PlexTales",
+  "version": "0.1.0",
+  "author": "flathack",
+  "license": "MIT",
+  "description": "Browse and play a Plex audiobook library from the Omarchy bar.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "PlexTales",
+    "description": "Plex audiobook browser and player controls",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "recentAlbumCount": 20,
+      "libraryItemCount": 100,
+      "demoMode": false,
+      "volumeMode": "System",
+      "miniMode": false
+    },
+    "schema": [
+      {
+        "key": "recentAlbumCount",
+        "type": "integer",
+        "label": "Recently added books",
+        "min": 5,
+        "max": 50,
+        "step": 5,
+        "defaultValue": 20,
+        "description": "Number of recently added books shown in the panel."
+      },
+      {
+        "key": "libraryItemCount",
+        "type": "integer",
+        "label": "Library items per view",
+        "min": 25,
+        "max": 250,
+        "step": 25,
+        "defaultValue": 100,
+        "description": "Maximum authors, books, collections, or chapters loaded in one view."
+      },
+      {
+        "key": "demoMode",
+        "type": "boolean",
+        "label": "Demo mode",
+        "defaultValue": false,
+        "description": "Show fictional audiobooks and never contact Plex or start mpv."
+      },
+      {
+        "key": "volumeMode",
+        "type": "enum",
+        "label": "Volume control",
+        "options": ["System", "Plex"],
+        "defaultValue": "System",
+        "description": "Choose whether the player slider changes the Omarchy system output or PlexTales local mpv volume."
+      },
+      {
+        "key": "miniMode",
+        "type": "boolean",
+        "label": "Mini player",
+        "defaultValue": false,
+        "description": "Open a compact playback popup. The full library remains available from the mini player."
+      }
+    ]
+  }
+}
