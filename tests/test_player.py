@@ -583,16 +583,22 @@ class PlexModelTests(unittest.TestCase):
         self.assertEqual(part, "/part/1")
         self.assertEqual(item["_artSource"], "/thumb/1")
 
-    def test_favorites_filters_unrated_tracks_client_side(self):
-        payload = {"MediaContainer": {"Metadata": [
-            {"ratingKey": "1", "type": "track", "title": "Unrated"},
-            {"ratingKey": "2", "type": "track", "title": "Favorite", "userRating": 10},
-        ]}}
-        with mock.patch.object(player, "music_section", return_value="4"), \
-             mock.patch.object(player, "plex_request", return_value=payload), \
-             mock.patch.object(player, "compact_items", side_effect=lambda config, rows: rows):
+    def test_favorites_are_books(self):
+        with mock.patch.object(player, "favorite_books", return_value=[
+            {"type": "album", "title": "Favorite"}]) as favorites:
             result = player.library_list(self.config, "favorites", 5)
+        favorites.assert_called_once_with(self.config)
         self.assertEqual([row["title"] for row in result], ["Favorite"])
+
+    def test_album_pages_use_plex_offset(self):
+        payload = {"MediaContainer": {"Metadata": [
+            {"ratingKey": str(index), "type": "album", "title": str(index)} for index in range(5)]}}
+        with mock.patch.object(player, "music_section", return_value="4"), \
+             mock.patch.object(player, "plex_request", return_value=payload) as request, \
+             mock.patch.object(player, "compact_items", side_effect=lambda config, rows: rows):
+            result = player.library_list(self.config, "albums", 5, 100)
+        self.assertEqual(len(result), 5)
+        self.assertEqual(request.call_args.args[2]["X-Plex-Container-Start"], 100)
 
     def test_cached_items_uses_last_good_data_for_network_failure(self):
         with tempfile.TemporaryDirectory() as folder, \
@@ -675,6 +681,7 @@ class AuthenticationTests(unittest.TestCase):
             {"id": 42, "code": "pin-code"},
             {"authToken": None},
             {"authToken": "access-token"},
+            {"id": 12345},
         ]
         with tempfile.TemporaryDirectory() as folder, \
              mock.patch.object(player, "CONFIG_FILE", pathlib.Path(folder) / "config.json"), \
@@ -688,6 +695,7 @@ class AuthenticationTests(unittest.TestCase):
             mode = stat.S_IMODE(player.CONFIG_FILE.stat().st_mode)
         self.assertTrue(result["connected"])
         self.assertEqual(saved["token"], "access-token")
+        self.assertEqual(saved["accountId"], "12345")
         self.assertEqual(mode, 0o600)
 
     def test_connection_health_preserves_transient_error_code(self):
@@ -858,7 +866,7 @@ class PlayerTests(unittest.TestCase):
         command.assert_not_called()
         self.assertEqual(player.state_data()["queue"], [{"key": "old"}])
 
-    def test_large_collection_reuses_parts_and_caps_the_queue(self):
+    def test_large_audiobook_reuses_parts_and_keeps_every_chapter(self):
         rows = [
             {"ratingKey": str(index), "type": "track", "title": f"Track {index}",
              "Media": [{"Part": [{"key": f"/part/{index}"}]}]}
@@ -874,8 +882,9 @@ class PlayerTests(unittest.TestCase):
             result = player.play_collection({"server": "http://plex", "token": "tok"}, "album", "album")
         fetch.assert_called_once()
         raw.assert_not_called()
-        self.assertEqual(len(activate.call_args.args[1]), player.PLAYBACK_QUEUE_MAX_ITEMS)
-        self.assertEqual(len(activate.call_args.args[2]), player.PLAYBACK_QUEUE_MAX_ITEMS)
+        self.assertEqual(len(activate.call_args.args[1]), 750)
+        self.assertEqual(len(activate.call_args.args[2]), 750)
+        self.assertEqual(activate.call_args.args[1][-1]["key"], "749")
         self.assertTrue(result["playing"])
 
     def test_toggle_resumes_persisted_queue_when_mpv_is_absent(self):
@@ -1328,7 +1337,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertEqual(manifest["schemaVersion"], 1)
         self.assertIn("bar-widget", manifest["kinds"])
         self.assertTrue((ROOT / manifest["entryPoints"]["barWidget"]).is_file())
-        self.assertEqual(manifest["version"], "0.2.3")
+        self.assertEqual(manifest["version"], "0.3.0")
         self.assertIn(f'APP_VERSION = "{manifest["version"]}"', HELPER.read_text(encoding="utf-8"))
         self.assertTrue((ROOT / "assets" / "book.svg").is_file())
 

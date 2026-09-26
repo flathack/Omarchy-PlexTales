@@ -15,6 +15,12 @@ Panel {
 
   property var player: ({ configured: false, connected: false, playing: false, track: null, position: 0, duration: 0, volume: 100, shuffle: false, repeat: "off" })
   property var items: []
+  property var allChapterItems: []
+  property bool showAllChapters: false
+  property bool hasMoreBooks: false
+  property int pageSize: 100
+  property string activeDataMode: ""
+  property string bookmarkNote: ""
   property var health: ({ ok: false, code: "unconfigured", message: "Connect your Plex account to start listening." })
   property var backStack: []
   property string view: "continue"
@@ -286,10 +292,14 @@ Panel {
             progressPercent: parsed.bookPercent
           })
         })
+        if (view === "continue" && parsed.completed === true)
+          items = items.filter(function(item) { return String(item.key) !== bookKey })
       }
       if (parsed.track && view === "children" && currentParentKind === "album"
           && String(parsed.track.albumKey || "") === currentParentKey && Number(parsed.bookTotal || 0) > 0) {
         currentBookProgress = Object.assign({}, currentBookProgress, {
+          progressTrackKey: parsed.track.key,
+          progressChapter: parsed.track.title,
           progressTotal: parsed.bookTotal,
           progressElapsed: parsed.bookElapsed,
           progressRemaining: parsed.bookRemaining,
@@ -342,6 +352,7 @@ Panel {
   function startData(requestId, mode, nextCommand) {
     if (requestId !== requestedDataRequestId || activeDataRequestId !== 0) return
     activeDataRequestId = requestId
+    activeDataMode = mode
     dataProc.command = nextCommand
     dataProc.running = true
   }
@@ -370,7 +381,7 @@ Panel {
     activeDataRequestId = 0
 
     if (isLatest) {
-      if (exitCode === 0) handleData(raw)
+      if (exitCode === 0) handleData(raw, activeDataMode)
       else {
         loading = false
         errorText = errorMessage(rawError, "Could not load the Plex library.")
@@ -401,6 +412,9 @@ Panel {
     currentParentKind = ""
     currentParentTitle = ""
     currentBookProgress = ({})
+    allChapterItems = []
+    showAllChapters = false
+    hasMoreBooks = false
     backStack = []
     if (nextView === "queue") {
       runData("queue", command(["queue"]))
@@ -408,6 +422,7 @@ Panel {
     }
     else {
       var limit = nextView === "recent" ? setting("recentAlbumCount", 20) : setting("libraryItemCount", 100)
+      pageSize = Number(limit)
       runData(nextView, command(["library", nextView, "--limit", String(limit)]))
       Qt.callLater(searchField.forceActiveFocus)
     }
@@ -438,6 +453,8 @@ Panel {
     currentParentKind = String(item.type || "album")
     currentParentTitle = String(item.title || "Collection")
     currentBookProgress = currentParentKind === "album" ? item : ({})
+    allChapterItems = []
+    showAllChapters = false
     view = "children"
     runData("children", command(["children", currentParentKind, currentParentKey]))
   }
@@ -478,17 +495,44 @@ Panel {
     else close()
   }
 
-  function handleData(raw) {
+  function handleData(raw, mode) {
     var parsed = parseJson(raw, null)
     loading = false
     if (!parsed) { errorText = "Plex returned unreadable data."; return }
-    items = Model.safeArray(parsed.items)
+    var received = Model.safeArray(parsed.items)
+    if (mode === "append") items = items.concat(received)
+    else if (view === "children" && currentParentKind === "album") {
+      allChapterItems = received
+      showAllChapters = received.length <= 30
+      items = showAllChapters ? received : chapterPreview(received, parsed.book)
+    } else items = received
+    hasMoreBooks = (view === "albums" || view === "artists") && parsed.hasMore === true
     if (view === "children" && currentParentKind === "album" && parsed.book)
       currentBookProgress = parsed.book
     if (parsed.stale === true) errorText = parsed.warning || "Showing cached library data while Plex is offline."
     selectedIndex = pendingSelectedIndex >= 0
       ? Math.max(0, Math.min(items.length - 1, pendingSelectedIndex)) : 0
     pendingSelectedIndex = -1
+  }
+
+  function chapterPreview(chapters, book) {
+    var key = String(book && book.progressTrackKey || "")
+    var current = chapters.findIndex(function(chapter) { return String(chapter.key) === key })
+    if (current < 0) current = 0
+    var start = Math.max(0, current - 2)
+    return chapters.slice(start, Math.min(chapters.length, start + 8))
+  }
+
+  function toggleChapters() {
+    showAllChapters = !showAllChapters
+    items = showAllChapters ? allChapterItems : chapterPreview(allChapterItems, currentBookProgress)
+    selectedIndex = 0
+    Qt.callLater(function() { itemList.positionViewAtBeginning() })
+  }
+
+  function loadMoreBooks() {
+    if (loading || !hasMoreBooks || (view !== "albums" && view !== "artists")) return
+    runData("append", command(["library", view, "--limit", String(pageSize), "--offset", String(items.length)]))
   }
 
   function activateItem(item) {
@@ -564,6 +608,29 @@ Panel {
     errorText = ""
     resetProc.command = command(["reset-progress", currentParentKey])
     resetProc.running = true
+  }
+
+  function runBookAction(args) {
+    if (metaProc.running) return
+    errorText = ""
+    metaProc.command = command(args)
+    metaProc.running = true
+  }
+
+  function toggleFavorite() { runBookAction(["favorite", currentParentKey]) }
+  function toggleFinished() {
+    runBookAction(["complete", currentParentKey, currentBookProgress.completed ? "no" : "yes"])
+  }
+  function addBookmark() {
+    runBookAction(["bookmark", "add", currentParentKey, bookmarkNote])
+    bookmarkNote = ""
+  }
+
+  function cycleSleepTimer() {
+    var modes = ["off", "15", "30", "45", "chapter"]
+    var current = player && player.sleepTimer ? String(player.sleepTimer.mode || "off") : "off"
+    var index = modes.indexOf(current)
+    runBookAction(["sleep-timer", modes[(index + 1) % modes.length]])
   }
 
   function playItemCollection(item, shuffle) {
@@ -951,6 +1018,23 @@ Panel {
         root.currentBookProgress = parsed.book
         root.runData("children", root.command(["children", "album", root.currentParentKey]))
       }
+    }
+  }
+
+  Process {
+    id: metaProc
+    stdout: StdioCollector { id: metaOutput; waitForEnd: true }
+    stderr: StdioCollector { id: metaError; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.errorText = root.errorMessage(metaError.text, "Could not update audiobook.")
+        return
+      }
+      root.refreshStatus()
+      if (root.view === "children" && root.currentParentKind === "album")
+        root.runData("children", root.command(["children", "album", root.currentParentKey]))
+      else if (root.view === "continue" || root.view === "favorites" || root.view === "albums")
+        root.loadView(root.view)
     }
   }
 
@@ -2042,6 +2126,23 @@ Panel {
         }
       }
 
+      RowLayout {
+        visible: root.activeTrack !== null && root.plexConnected && !root.helpVisible
+        width: parent.width
+        PanelActionButton {
+          iconText: "\uf017"; tooltipText: "Sleep timer: off, 15, 30, 45 minutes, end of chapter"
+          foreground: root.foreground; fontFamily: root.fontFamily; focusable: true
+          Accessible.name: tooltipText
+          onClicked: root.cycleSleepTimer()
+        }
+        Text {
+          textFormat: Text.PlainText
+          text: "Sleep: " + (root.player && root.player.sleepTimer && root.player.sleepTimer.mode !== "off"
+            ? (root.player.sleepTimer.mode === "chapter" ? "end of chapter" : root.player.sleepTimer.mode + " min") : "off")
+          color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+        }
+      }
+
       PanelActionButton {
         id: connectButton
         visible: !root.helpVisible && !root.configured && !root.demoMode
@@ -2214,6 +2315,23 @@ Panel {
           onClicked: root.resetCurrentBookProgress()
         }
         PanelActionButton {
+          visible: root.view === "children" && root.currentParentKind === "album"
+          iconText: root.currentBookProgress.favorite ? "\uf004" : "\uf08a"
+          tooltipText: root.currentBookProgress.favorite ? "Remove favorite" : "Add book to favorites"
+          foreground: root.foreground; fontFamily: root.fontFamily
+          focusable: true; Accessible.name: tooltipText
+          onClicked: root.toggleFavorite()
+        }
+        PanelActionButton {
+          visible: root.view === "children" && root.currentParentKind === "album"
+            && Number(root.currentBookProgress.progressElapsed || 0) > 0
+          iconText: root.currentBookProgress.completed ? "\uf2ea" : "\uf058"
+          tooltipText: root.currentBookProgress.completed ? "Mark book unfinished" : "Mark book finished"
+          foreground: root.foreground; fontFamily: root.fontFamily
+          focusable: true; Accessible.name: tooltipText
+          onClicked: root.toggleFinished()
+        }
+        PanelActionButton {
           visible: root.view === "queue" && root.items.length > 0
           iconText: "\uf2ed"; tooltipText: "Clear upcoming"; foreground: root.foreground; fontFamily: root.fontFamily
           focusable: true; Accessible.name: tooltipText
@@ -2221,7 +2339,8 @@ Panel {
         }
         Text {
           textFormat: Text.PlainText
-          text: root.loading ? "Loading…" : root.items.length + (root.items.length === 1 ? " item" : " items")
+          text: root.loading ? "Loading…" : (root.view === "children" && root.currentParentKind === "album"
+            ? root.allChapterItems.length + " chapters" : root.items.length + (root.items.length === 1 ? " item" : " items"))
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
@@ -2248,6 +2367,90 @@ Panel {
           foreground: root.foreground
           muted: root.dim
           fontFamily: root.fontFamily
+        }
+        Text {
+          textFormat: Text.PlainText
+          text: "Chapter " + (Math.max(0, root.allChapterItems.findIndex(function(chapter) {
+            return String(chapter.key) === String(root.currentBookProgress.progressTrackKey || "")
+          })) + 1) + " of " + root.allChapterItems.length
+          visible: root.allChapterItems.length > 0
+          color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+        }
+      }
+
+      RowLayout {
+        visible: !root.helpVisible && root.plexConnected && root.view === "children"
+          && root.currentParentKind === "album" && root.allChapterItems.length > 30
+        width: parent.width
+        PanelActionButton {
+          iconText: root.showAllChapters ? "\uf106" : "\uf107"
+          tooltipText: root.showAllChapters ? "Show nearby chapters" : "Show all chapters"
+          foreground: root.foreground; fontFamily: root.fontFamily; focusable: true
+          Accessible.name: tooltipText
+          onClicked: root.toggleChapters()
+        }
+        Text {
+          textFormat: Text.PlainText
+          text: root.showAllChapters ? "All " + root.allChapterItems.length + " chapters" : "Current and nearby chapters"
+          color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+        }
+      }
+      RowLayout {
+        visible: !root.helpVisible && root.plexConnected && root.view === "children" && root.currentParentKind === "album"
+        width: parent.width
+        TextField {
+          Layout.fillWidth: true
+          placeholderText: "Bookmark note (optional)"
+          foreground: root.foreground
+          text: root.bookmarkNote
+          maximumLength: 200
+          onTextEdited: root.bookmarkNote = text
+          font.family: root.fontFamily
+          Accessible.name: "Bookmark note"
+        }
+        PanelActionButton {
+          iconText: "\uf02e"; tooltipText: "Add bookmark at current position"
+          foreground: root.foreground; fontFamily: root.fontFamily; focusable: true
+          Accessible.name: tooltipText
+          onClicked: root.addBookmark()
+        }
+      }
+      ListView {
+        visible: root.view === "children" && root.currentParentKind === "album"
+          && (root.currentBookProgress.bookmarks || []).length > 0
+        width: parent.width
+        height: Math.min(contentHeight, Style.space(112))
+        clip: true
+        spacing: Style.space(3)
+        boundsBehavior: Flickable.StopAtBounds
+        Accessible.role: Accessible.List
+        Accessible.name: "Book bookmarks"
+        model: root.view === "children" && root.currentParentKind === "album"
+          ? (root.currentBookProgress.bookmarks || []) : []
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        delegate: RowLayout {
+          required property var modelData
+          width: ListView.view.width
+          height: Style.space(30)
+          Text {
+            Layout.fillWidth: true
+            textFormat: Text.PlainText
+            text: modelData.name + " · " + modelData.chapter + " · " + Model.formatTime(modelData.position)
+            elide: Text.ElideRight
+            color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
+          }
+          PanelActionButton {
+            iconText: "\uf04b"; tooltipText: "Play bookmark"
+            foreground: root.foreground; fontFamily: root.fontFamily; focusable: true
+            Accessible.name: tooltipText
+            onClicked: root.runAction(root.command(["bookmark", "play", root.currentParentKey, modelData.id]))
+          }
+          PanelActionButton {
+            iconText: "\uf00d"; tooltipText: "Remove bookmark"
+            foreground: root.foreground; fontFamily: root.fontFamily; focusable: true
+            Accessible.name: tooltipText
+            onClicked: root.runBookAction(["bookmark", "remove", root.currentParentKey, modelData.id])
+          }
         }
       }
 
@@ -2443,6 +2646,14 @@ Panel {
             }
           }
         }
+      }
+
+      PanelActionButton {
+        visible: !root.helpVisible && root.plexConnected && root.hasMoreBooks && !root.loading
+        iconText: "\uf107"; tooltipText: "Load more books"
+        foreground: root.foreground; fontFamily: root.fontFamily; focusable: true
+        Accessible.name: tooltipText
+        onClicked: root.loadMoreBooks()
       }
 
     }

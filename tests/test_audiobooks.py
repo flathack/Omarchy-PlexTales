@@ -21,6 +21,8 @@ class AudiobookProgressTests(unittest.TestCase):
         base = pathlib.Path(self.folder.name)
         self.patches = [
             mock.patch.object(player, "PROGRESS_FILE", base / "config" / "progress.json"),
+            mock.patch.object(player, "BOOKMARK_FILE", base / "config" / "bookmarks.json"),
+            mock.patch.object(player, "SLEEP_FILE", base / "config" / "sleep-timer.json"),
             mock.patch.object(player, "STATE_FILE", base / "cache" / "state.json"),
             mock.patch.object(player, "DATA_CACHE_DIR", base / "cache" / "data"),
         ]
@@ -98,7 +100,7 @@ class AudiobookProgressTests(unittest.TestCase):
              mock.patch.object(player, "activate_queue", return_value={"playing": True}) as activate:
             player.play_collection(self.config, "album", "book-1")
         self.assertEqual(prepare.call_args.args[3], "chapter-2")
-        self.assertEqual(activate.call_args.kwargs["start_position"], 3661.5)
+        self.assertEqual(activate.call_args.kwargs["start_position"], 3646.5)
 
     def test_status_checkpoints_current_chapter(self):
         queue = [self.track]
@@ -149,7 +151,73 @@ class AudiobookProgressTests(unittest.TestCase):
         self.assertEqual([item["key"] for item in activate.call_args.args[1]],
                          ["chapter-1", "chapter-2", "chapter-3"])
         self.assertEqual(activate.call_args.kwargs["start_index"], 1)
-        self.assertEqual(activate.call_args.kwargs["start_position"], 30)
+        self.assertEqual(activate.call_args.kwargs["start_position"], 15)
+
+    def test_rewind_crosses_chapter_boundary(self):
+        queue = [{"duration": 100}, {"duration": 200}]
+        self.assertEqual(player.rewind_bookmark(queue, 1, 5), (0, 90))
+
+    def test_accounts_on_same_server_do_not_share_progress(self):
+        first = {**self.config, "accountId": "account-a"}
+        second = {**self.config, "accountId": "account-b"}
+        player.checkpoint_progress(first, self.track, 50, 7200, True)
+        self.assertEqual(player.book_progress(second, "book-1"), {})
+
+    def test_finished_book_leaves_resume_and_can_be_reopened(self):
+        player.checkpoint_progress(self.config, self.track, 120, 7200, True)
+        player.set_book_completed(self.config, "book-1", True)
+        self.assertEqual(player.continue_books(self.config, 10), [])
+        player.set_book_completed(self.config, "book-1", False)
+        self.assertEqual(len(player.continue_books(self.config, 10)), 1)
+
+    def test_book_favorites_are_account_scoped(self):
+        album = {"ratingKey": "book-1", "type": "album", "title": "Story"}
+        with mock.patch.object(player, "plex_request", return_value={"MediaContainer": {"Metadata": [album]}}):
+            self.assertTrue(player.toggle_favorite(self.config, "book-1")["favorite"])
+        self.assertEqual([row["key"] for row in player.favorite_books(self.config)], ["book-1"])
+        self.assertEqual(player.favorite_books({**self.config, "accountId": "other"}), [])
+        self.assertFalse(player.toggle_favorite(self.config, "book-1")["favorite"])
+
+    def test_bookmark_notes_are_private_and_per_book(self):
+        with mock.patch.object(player, "status", return_value={"track": self.track, "position": 123, "playing": True}):
+            result = player.change_bookmark(self.config, "book-1", "add", "Listen again")
+        bookmark = result["bookmarks"][0]
+        self.assertEqual(bookmark["position"], 123)
+        self.assertEqual(bookmark["name"], "Listen again")
+        self.assertEqual(player.bookmarks_for_book(self.config, "book-2"), [])
+        self.assertEqual(stat.S_IMODE(player.BOOKMARK_FILE.stat().st_mode), 0o600)
+        player.change_bookmark(self.config, "book-1", "remove", bookmark_id=bookmark["id"])
+        self.assertEqual(player.bookmarks_for_book(self.config, "book-1"), [])
+
+    def test_stale_status_cannot_recreate_reset_progress(self):
+        observed = player.progress_generation()
+        player.checkpoint_progress(self.config, self.track, 50, 7200, True)
+        with mock.patch.object(player, "mpv_properties", return_value=None), \
+             mock.patch.object(player, "status", return_value={"playing": False}):
+            player.reset_book_progress(self.config, "book-1")
+        player.checkpoint_progress(self.config, self.track, 60, 7200, True, expected_generation=observed)
+        self.assertEqual(player.book_progress(self.config, "book-1"), {})
+
+    def test_status_marks_last_chapter_finished_near_end(self):
+        track = {**self.track, "duration": 60, "_bookDuration": 120,
+                 "_bookOffset": 60}
+        snapshot = {"playlist": [], "playlist-pos": 0, "pause": False, "idle-active": False,
+                    "time-pos": 50, "duration": 60, "volume": 100}
+        with mock.patch.object(player, "mpv_properties", return_value=snapshot), \
+             mock.patch.object(player, "sync_queue_from_mpv", return_value={"queue": [track]}), \
+             mock.patch.object(player, "update_timeline"):
+            result = player.status(self.config)
+        self.assertTrue(result["completed"])
+        self.assertEqual(player.continue_books(self.config, 10), [])
+
+    def test_sleep_timer_is_persisted_and_can_be_cancelled(self):
+        with mock.patch.object(player, "load_config", return_value=self.config), \
+             mock.patch.object(player, "status", return_value={"track": self.track, "playing": True}), \
+             mock.patch.object(player.subprocess, "Popen") as launch:
+            result = player.set_sleep_timer("15")
+        self.assertEqual(result["mode"], "15")
+        launch.assert_called_once()
+        self.assertEqual(player.set_sleep_timer("off")["mode"], "off")
 
     def test_playing_chapter_from_search_loads_its_whole_book(self):
         with mock.patch.object(player, "mpv_running", return_value=False), \

@@ -6,13 +6,15 @@ PlexTales is an unofficial Omarchy bar widget for audiobooks stored on a Plex Me
 
 Create a **Music** library in Plex for audiobooks. PlexTales treats an artist as an author, an album as a book, and its tracks as chapters. Name and order chapters in Plex as you want them played. A book can consist of one long file or many chapter files. Plex libraries of type Movie, Show, or Photo are not supported.
 
-- **Resume** lists books with saved progress. Select a book and press its play button to continue at the saved chapter and second.
+- **Resume** lists unfinished books with saved progress. Continuing a book rewinds 15 seconds for context, including across chapter boundaries. Finished books remain under **Books** and can be marked unfinished.
 - Book progress is saved per book and chapter on status polls (about every 3 seconds while the panel is open and every 10 seconds during background playback), and immediately on pause, seek, chapter change, or shutdown.
-- Progress is stored in `${XDG_CONFIG_HOME:-~/.config}/plextales/progress.json`, outside the disposable artwork and library cache. It survives app restarts, cache cleanup, and Plex token refreshes. Progress is local to this computer and library; it is not synchronized to other Plex clients.
+- Progress is stored in `${XDG_CONFIG_HOME:-~/.config}/plextales/progress.json`, outside the disposable artwork and library cache. It survives app restarts, cache cleanup, and Plex token refreshes. Progress and favorites are separated by Plex account, server, and library. They are local to this computer and are not synchronized to other Plex clients.
 - The player has 30-second back/forward controls, a chapter seek bar with hour display, and selectable 1×, 1.25×, 1.5×, 1.75×, and 2× speed. Speed is remembered locally.
 - The player shows the current chapter length and, underneath it, the total length of the audiobook across its chapters.
 - Every book in the library and at the top of its chapter list shows a progress bar, percent complete, time reached in the story, and time remaining. Unstarted books show 0%; started books also appear in **Resume**. The full and mini players show the current book progress. This is the current point in the book, so rewinding moves the marker back; it does not count repeated listening time.
-- Plex browser sign-in, cover art, search, queue, favorites, mini player, hardware media keys through `mpv-mpris`, system volume, and dark/light Omarchy themes are inherited from Tunarchy.
+- A sleep timer offers 15, 30, or 45 minutes, or the end of the current chapter. Its background watcher continues when the popup closes and stops playback after saving the position.
+- A book can have local bookmarks with optional notes. Each bookmark opens its exact chapter and position. Books with many chapters initially show the current chapter and nearby chapters; **Show all chapters** expands the full list. The **Books** and **Authors** lists can load additional pages.
+- Plex browser sign-in, cover art, search, queue, mini player, hardware media keys through `mpv-mpris`, system volume, and dark/light Omarchy themes are inherited from Tunarchy. **Favs** now stores whole books locally.
 
 ## Requirements and installation
 
@@ -38,6 +40,7 @@ An HTTPS server URL is recommended. With HTTP, devices on the network path can o
 - In a book's chapter list, select **Reset book progress** beside **Continue book** and confirm with a second click to forget that book's bookmark. If that book is playing, playback stops; the next **Continue book** starts at chapter 1. Other books keep their progress.
 - Choose a chapter to play it directly. Selecting an earlier chapter moves the saved book position there.
 - Click the speed button to cycle through the available speeds.
+- Click the clock button to cycle the sleep timer. In a book, use the heart to add it to **Favs**, the check button to mark it finished, or the bookmark field to save a note at the current position.
 - Open **Help and settings** to select a full or mini player and system or local player volume.
 - The Plex power button disconnects playback while keeping the account and local book progress.
 
@@ -49,6 +52,10 @@ PLAYER="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/io.github.flathack.ple
 "$PLAYER" status
 "$PLAYER" library continue
 "$PLAYER" library albums
+"$PLAYER" library albums --limit 100 --offset 100
+"$PLAYER" sleep-timer 30
+"$PLAYER" sleep-timer chapter
+"$PLAYER" bookmark list BOOK_KEY
 "$PLAYER" control seek 1800
 "$PLAYER" control speed 1.25
 "$PLAYER" shutdown
