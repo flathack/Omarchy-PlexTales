@@ -2,6 +2,10 @@
 
 PlexTales is an unofficial Omarchy bar widget for audiobooks stored on a Plex Media Server. It is based on [Tunarchy](https://github.com/flathack/omarchy-tunarchy) and uses the same native Quickshell player layout. PlexTales is not affiliated with Plex, Inc.
 
+![PlexTales player and book progress in the Books view](preview.png)
+
+*PlexTales in demo mode with fictional books and audiobook progress.*
+
 ## Audiobook model
 
 Create a **Music** library in Plex for audiobooks. PlexTales treats an artist as an author, an album as a book, and its tracks as chapters. Name and order chapters in Plex as you want them played. A book can consist of one long file or many chapter files. Plex libraries of type Movie, Show, or Photo are not supported.
