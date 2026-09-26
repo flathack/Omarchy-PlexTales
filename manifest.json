@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.flathack.plextales",
   "name": "PlexTales",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "author": "flathack",
   "license": "MIT",
   "description": "Browse and play a Plex audiobook library from the Omarchy bar.",

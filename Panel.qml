@@ -2377,6 +2377,7 @@ Panel {
           text: "Chapter " + (Math.max(0, root.allChapterItems.findIndex(function(chapter) {
             return String(chapter.key) === String(root.currentBookProgress.progressTrackKey || "")
           })) + 1) + " of " + root.allChapterItems.length
+            + (root.currentBookProgress.progressSource === "plex" ? " · from Plex" : "")
           visible: root.allChapterItems.length > 0
           color: root.dim; font.family: root.fontFamily; font.pixelSize: Style.font.caption
         }
@@ -2574,8 +2575,9 @@ Panel {
               Text {
                 textFormat: Text.PlainText
                 Layout.fillWidth: true
-                text: root.view === "continue"
+              text: root.view === "continue"
                   ? (mediaRow.modelData.progressChapter || "Chapter") + " · " + Model.formatTime(mediaRow.modelData.progressPosition)
+                    + (mediaRow.modelData.progressSource === "plex" ? " · Plex" : "")
                   : Model.subtitle(mediaRow.modelData)
                 color: root.dim
                 font.family: root.fontFamily

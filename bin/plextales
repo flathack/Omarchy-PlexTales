@@ -41,7 +41,7 @@ SOCKET_FILE = CACHE_DIR / "mpv.sock"
 DATA_CACHE_DIR = CACHE_DIR / "data"
 ART_CACHE_DIR = CACHE_DIR / "art"
 APP_NAME = "PlexTales"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 OUTLINE_MAX_AGE_SECONDS = 86400
 PROGRESS_MAX_BYTES = 1024 * 1024
 PROGRESS_MAX_BOOKS = 1000
@@ -915,6 +915,12 @@ def album_tracks(config: dict[str, Any], album_key: str) -> list[dict[str, Any]]
     return compact_items(config, album_track_rows(config, album_key))
 
 
+def album_children(config: dict[str, Any], album_key: str) -> list[dict[str, Any]]:
+    rows = album_track_rows(config, album_key)
+    sync_book_progress_from_plex(config, album_key, rows)
+    return compact_items(config, rows)
+
+
 def artist_albums(config: dict[str, Any], artist_key: str) -> list[dict[str, Any]]:
     payload = plex_request(config, f"/library/metadata/{urllib.parse.quote(artist_key)}/children")
     return compact_items(config, [row for row in metadata(payload) if row.get("type") == "album"])
@@ -1387,6 +1393,86 @@ def book_progress(config: dict[str, Any], album_key: str) -> dict[str, Any]:
     return record if isinstance(record, dict) else {}
 
 
+def plex_book_chapter(rows: list[dict[str, Any]]) -> tuple[int, float, int, bool] | None:
+    """Find the most recently played chapter exposed by Plex's user metadata."""
+    candidates = []
+    for index, row in enumerate(rows):
+        viewed_at = safe_int(row.get("lastViewedAt"))
+        if viewed_at <= 0:
+            continue
+        duration = max(0.0, safe_float(row.get("duration")) / 1000)
+        offset = max(0.0, safe_float(row.get("viewOffset")) / 1000)
+        candidates.append((viewed_at, index, min(offset, duration) if duration else offset))
+    if not candidates:
+        return None
+    viewed_at, index, offset = max(candidates)
+    finished = offset <= 0 and safe_int(rows[index].get("viewCount")) > 0
+    if finished and index + 1 < len(rows):
+        index += 1
+        offset = 0.0
+        finished = False
+    elif finished:
+        offset = max(0.0, safe_float(rows[index].get("duration")) / 1000)
+    return index, offset, viewed_at, finished
+
+
+def sync_book_progress_from_plex(config: dict[str, Any], book_key: str,
+                                 rows: list[dict[str, Any]] | None = None) -> bool:
+    """Import a newer Plex chapter without replacing a newer local bookmark."""
+    if not connection_enabled(config):
+        return False
+    if rows is None:
+        try:
+            rows = album_track_rows(config, book_key)
+        except PlayerError as error:
+            if error.code in ("unreachable", "dns", "timeout"):
+                return False
+            raise
+    candidate = plex_book_chapter(rows)
+    if candidate is None:
+        return False
+    index, position, viewed_at, completed = candidate
+    row = rows[index]
+    track_key = str(row.get("ratingKey", row.get("key", "")))
+    if not track_key:
+        return False
+    total, offsets = album_outline(rows)
+    track = compact_item(config, row, fetch_art=False)
+    track["albumKey"] = book_key
+    with state_lock():
+        payload = load_json(PROGRESS_FILE, {}, PROGRESS_MAX_BYTES)
+        if not isinstance(payload, dict):
+            payload = {}
+        namespace = progress_namespace(config)
+        records = payload.get(namespace, {})
+        if not isinstance(records, dict):
+            records = {}
+        previous = records.get(book_key, {})
+        resets = payload.get("_resetAt", {})
+        reset_at = safe_int(resets.get(namespace, {}).get(book_key)) if isinstance(resets, dict) \
+            and isinstance(resets.get(namespace), dict) else 0
+        local_at = safe_int(previous.get("updated")) if isinstance(previous, dict) else 0
+        observed_remote = safe_int(previous.get("remoteViewedAt")) if isinstance(previous, dict) else 0
+        if viewed_at <= max(local_at, reset_at, observed_remote):
+            return False
+        elapsed = offsets.get(track_key, 0.0) + position
+        records[book_key] = {
+            "bookKey": book_key, "trackKey": track_key,
+            "title": str(track.get("album", ""))[:300],
+            "author": str(track.get("artist", ""))[:300],
+            "chapter": str(track.get("title", ""))[:300],
+            "artSource": str(track.get("artSource", ""))[:1024],
+            "position": round(position, 2), "duration": round(safe_float(track.get("duration")), 2),
+            "chapterOffset": round(offsets.get(track_key, 0.0), 2),
+            **progress_values(total, elapsed),
+            "completed": completed, "updated": min(viewed_at, int(time.time())),
+            "remoteViewedAt": viewed_at, "source": "plex",
+        }
+        payload[namespace] = records
+        atomic_json(PROGRESS_FILE, payload, maximum=PROGRESS_MAX_BYTES)
+    return True
+
+
 def progress_generation() -> int:
     payload = load_json(PROGRESS_FILE, {}, PROGRESS_MAX_BYTES)
     return safe_int(payload.get("_generation")) if isinstance(payload, dict) else 0
@@ -1481,6 +1567,7 @@ def hydrate_progress(config: dict[str, Any], book_keys: list[str]) -> None:
 def progress_fields(record: dict[str, Any]) -> dict[str, Any]:
     return {"progressChapter": str(record.get("chapter", "")),
             "progressTrackKey": str(record.get("trackKey", "")),
+            "progressSource": str(record.get("source", "")),
             "progressPosition": safe_float(record.get("position")),
             "progressTotal": safe_float(record.get("bookTotal")),
             "progressElapsed": safe_float(record.get("bookElapsed")),
@@ -1569,6 +1656,7 @@ def checkpoint_progress(config: dict[str, Any], track: dict[str, Any] | None,
             "chapterOffset": round(max(0.0, safe_float(book_elapsed) - position), 2) if book_total > 0 else 0,
             **metrics,
             "completed": bool(previous.get("completed")) if isinstance(previous, dict) else False,
+            "remoteViewedAt": safe_int(previous.get("remoteViewedAt")) if isinstance(previous, dict) else 0,
             "updated": now,
         }
         if len(records) > PROGRESS_MAX_BOOKS:
@@ -1603,6 +1691,15 @@ def reset_book_progress(config: dict[str, Any], book_key: str) -> dict[str, Any]
             if isinstance(records, dict) and book_key in records:
                 records.pop(book_key)
                 payload[namespace] = records
+            resets = payload.get("_resetAt", {})
+            if not isinstance(resets, dict):
+                resets = {}
+            namespace_resets = resets.get(namespace, {})
+            if not isinstance(namespace_resets, dict):
+                namespace_resets = {}
+            namespace_resets[book_key] = int(time.time())
+            resets[namespace] = namespace_resets
+            payload["_resetAt"] = resets
             payload["_generation"] = safe_int(payload.get("_generation")) + 1
             atomic_json(PROGRESS_FILE, payload, maximum=PROGRESS_MAX_BYTES)
     book = decorate_book_items(config, [{"type": "album", "key": book_key}])[0]
@@ -1628,6 +1725,19 @@ def continue_books(config: dict[str, Any], limit: int) -> list[dict[str, Any]]:
              "artSource": str(row.get("artSource", "")), **progress_fields(row),
              "updated": safe_int(row.get("updated"))}
             for row in records[:max(1, min(limit, 250))] if isinstance(row, dict) and row.get("bookKey")]
+
+
+def refresh_recent_books_from_plex(config: dict[str, Any], limit: int) -> None:
+    if not connection_enabled(config):
+        return
+    records = sorted((row for row in progress_records(config).values() if isinstance(row, dict)),
+                     key=lambda row: safe_int(row.get("updated")), reverse=True)
+    keys = [str(row["bookKey"]) for row in records[:max(1, min(limit, 10))] if row.get("bookKey")]
+    def refresh(key: str) -> None:
+        with contextlib.suppress(PlayerError, OSError):
+            sync_book_progress_from_plex(config, key)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(keys)) or 1) as executor:
+        list(executor.map(refresh, keys))
 
 
 @contextlib.contextmanager
@@ -1881,8 +1991,9 @@ def prepare_rows(config: dict[str, Any], rows: list[dict[str, Any]]) -> tuple[li
 
 
 def prepare_collection(config: dict[str, Any], kind: str, key: str,
-                       selected_key: str = "", shuffle: bool = False) -> tuple[list[dict[str, Any]], list[str]]:
-    rows = album_track_rows(config, key) if kind == "album" else playlist_track_rows(config, key)
+                       selected_key: str = "", shuffle: bool = False,
+                       rows_override: list[dict[str, Any]] | None = None) -> tuple[list[dict[str, Any]], list[str]]:
+    rows = rows_override if rows_override is not None else (album_track_rows(config, key) if kind == "album" else playlist_track_rows(config, key))
     if not rows:
         raise PlayerError("This collection has no playable tracks.", "empty-collection")
     if kind == "album" and len(rows) > BOOK_CHAPTER_MAX_ITEMS:
@@ -2047,14 +2158,22 @@ def play(config: dict[str, Any], track_key: str, album_key: str | None,
 def play_collection(config: dict[str, Any], kind: str, key: str, shuffle: bool = False) -> dict[str, Any]:
     if mpv_running():
         status(config, force_timeline=True)
+    rows = album_track_rows(config, key) if kind == "album" and not shuffle and connection_enabled(config) else None
+    if rows is not None:
+        sync_book_progress_from_plex(config, key, rows)
     progress = book_progress(config, key) if kind == "album" and not shuffle else {}
     restarting = bool(progress.get("completed"))
     if restarting:
         progress = {}
-    queue, urls = prepare_collection(config, kind, key, str(progress.get("trackKey", "")), shuffle)
+    queue, urls = prepare_collection(config, kind, key, str(progress.get("trackKey", "")), shuffle,
+                                     rows_override=rows) if rows is not None else \
+        prepare_collection(config, kind, key, str(progress.get("trackKey", "")), shuffle)
     selected_index = next((index for index, item in enumerate(queue) if item.get("key") == progress.get("trackKey")), 0)
     start = safe_float(progress.get("position")) if queue and progress.get("trackKey") == queue[selected_index].get("key") else 0
-    selected_index, start = rewind_bookmark(queue, selected_index, start) if progress else (selected_index, start)
+    if progress.get("source") == "plex":
+        start = max(0.0, start - 15)
+    elif progress:
+        selected_index, start = rewind_bookmark(queue, selected_index, start)
     result = activate_queue(config, queue, urls, shuffle, start_position=start, start_index=selected_index)
     if restarting:
         set_book_completed(config, key, False)
@@ -2092,11 +2211,16 @@ def resume_queue(config: dict[str, Any]) -> dict[str, Any]:
         revision = queue_revision(state)
     if not config or not isinstance(stored, list) or not stored:
         return status(config)
+    book_key = str(stored[0].get("albumKey", "")) if isinstance(stored[0], dict) else ""
+    if book_key and sync_book_progress_from_plex(config, book_key):
+        return play_collection(config, "album", book_key)
     queue, urls = prepare_saved_queue(config, stored)
     progress = book_progress(config, str(queue[0].get("albumKey", ""))) if queue else {}
     selected_index = next((i for i, item in enumerate(queue) if item.get("key") == progress.get("trackKey")), 0)
     start = safe_float(progress.get("position")) if progress and queue[selected_index].get("key") == progress.get("trackKey") else 0
-    if progress:
+    if progress.get("source") == "plex":
+        start = max(0.0, start - 15)
+    elif progress:
         selected_index, start = rewind_bookmark(queue, selected_index, start)
     return activate_queue(config, queue, urls, bool(state.get("shuffle")),
                           str(state.get("repeat", "off")), revision,
@@ -2703,6 +2827,8 @@ def main() -> int:
             result["library"] = config.get("sectionTitle", "Music")
         elif args.command == "library":
             config = load_config()
+            if args.view == "continue":
+                refresh_recent_books_from_plex(config, args.limit)
             result = ({"items": continue_books(config, args.limit), "stale": False}
                       if args.view == "continue" else
                       {"items": favorite_books(config), "stale": False} if args.view == "favorites" else
@@ -2721,7 +2847,7 @@ def main() -> int:
             result = {"items": album_tracks(load_config(), args.album), "album": args.album}
         elif args.command == "children":
             config = load_config()
-            loader = artist_albums if args.kind == "artist" else (playlist_tracks if args.kind == "playlist" else album_tracks)
+            loader = artist_albums if args.kind == "artist" else (playlist_tracks if args.kind == "playlist" else album_children)
             result = cached_items(config, f"children-{args.kind}-{args.key}", lambda: loader(config, args.key))
             if args.kind == "artist":
                 result["items"] = decorate_book_items(config, result["items"])

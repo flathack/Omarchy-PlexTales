@@ -219,6 +219,88 @@ class AudiobookProgressTests(unittest.TestCase):
         launch.assert_called_once()
         self.assertEqual(player.set_sleep_timer("off")["mode"], "off")
 
+    def test_newer_plex_chapter_is_imported_and_finished_track_advances(self):
+        self.config["connectionEnabled"] = True
+        rows = [
+            {"ratingKey": "chapter-1", "type": "track", "title": "One", "parentTitle": "A Long Story",
+             "grandparentTitle": "Jane Author", "duration": 60000, "lastViewedAt": 100, "viewCount": 1},
+            {"ratingKey": "chapter-2", "type": "track", "title": "Two", "parentTitle": "A Long Story",
+             "grandparentTitle": "Jane Author", "duration": 120000, "lastViewedAt": 200, "viewCount": 1},
+            {"ratingKey": "chapter-3", "type": "track", "title": "Three", "parentTitle": "A Long Story",
+             "grandparentTitle": "Jane Author", "duration": 180000},
+        ]
+        self.assertTrue(player.sync_book_progress_from_plex(self.config, "book-1", rows))
+        saved = player.book_progress(self.config, "book-1")
+        self.assertEqual((saved["trackKey"], saved["position"], saved["bookElapsed"]),
+                         ("chapter-3", 0, 180))
+        self.assertEqual(saved["updated"], 200)
+        self.assertFalse(player.sync_book_progress_from_plex(self.config, "book-1", rows))
+
+    def test_plex_offset_and_latest_timestamp_choose_current_chapter(self):
+        self.config["connectionEnabled"] = True
+        rows = [
+            {"ratingKey": "chapter-1", "type": "track", "title": "One", "duration": 60000,
+             "lastViewedAt": 200, "viewCount": 1},
+            {"ratingKey": "chapter-2", "type": "track", "title": "Two", "duration": 120000,
+             "lastViewedAt": 300, "viewOffset": 45000},
+        ]
+        self.assertEqual(player.plex_book_chapter(rows), (1, 45, 300, False))
+        self.assertTrue(player.sync_book_progress_from_plex(self.config, "book-1", rows))
+        self.assertEqual(player.book_progress(self.config, "book-1")["position"], 45)
+
+    def test_plex_finished_final_chapter_marks_book_complete(self):
+        self.config["connectionEnabled"] = True
+        rows = [{"ratingKey": "last", "type": "track", "title": "Last", "duration": 60000,
+                 "lastViewedAt": 300, "viewCount": 1}]
+        self.assertTrue(player.sync_book_progress_from_plex(self.config, "book-1", rows))
+        record = player.book_progress(self.config, "book-1")
+        self.assertTrue(record["completed"])
+        self.assertEqual((record["bookElapsed"], record["bookPercent"]), (60, 100))
+
+    def test_plex_never_overwrites_newer_local_position_or_reset(self):
+        self.config["connectionEnabled"] = True
+        rows = [{"ratingKey": "chapter-2", "type": "track", "title": "Two", "duration": 120000,
+                 "lastViewedAt": 100, "viewOffset": 45000}]
+        player.checkpoint_progress(self.config, self.track, 30, 7200, True)
+        self.assertFalse(player.sync_book_progress_from_plex(self.config, "book-1", rows))
+        self.assertEqual(player.book_progress(self.config, "book-1")["position"], 30)
+        with mock.patch.object(player, "mpv_properties", return_value=None), \
+             mock.patch.object(player, "status", return_value={"playing": False}):
+            player.reset_book_progress(self.config, "book-1")
+        self.assertFalse(player.sync_book_progress_from_plex(self.config, "book-1", rows))
+        self.assertEqual(player.book_progress(self.config, "book-1"), {})
+
+    def test_remote_chapter_is_used_when_continuing_book(self):
+        self.config["connectionEnabled"] = True
+        rows = [{"ratingKey": "chapter-1", "type": "track", "title": "One", "duration": 60000,
+                 "parentTitle": "Story", "lastViewedAt": 100, "viewCount": 1},
+                {"ratingKey": "chapter-2", "type": "track", "title": "Two", "duration": 120000,
+                 "parentTitle": "Story", "lastViewedAt": 200, "viewOffset": 45000}]
+        queue = [{"key": "chapter-1", "albumKey": "book-1", "duration": 60},
+                 {"key": "chapter-2", "albumKey": "book-1", "duration": 120}]
+        with mock.patch.object(player, "album_track_rows", return_value=rows), \
+             mock.patch.object(player, "prepare_collection", return_value=(queue, ["a", "b"])) as prepare, \
+             mock.patch.object(player, "activate_queue", return_value={"playing": True}) as activate:
+            player.play_collection(self.config, "album", "book-1")
+        self.assertEqual(prepare.call_args.args[3], "chapter-2")
+        self.assertEqual(activate.call_args.kwargs["start_index"], 1)
+        self.assertEqual(activate.call_args.kwargs["start_position"], 30)
+
+    def test_plex_chapter_near_its_start_does_not_rewind_into_previous_chapter(self):
+        self.config["connectionEnabled"] = True
+        rows = [{"ratingKey": "chapter-1", "type": "track", "title": "One", "duration": 60000,
+                 "lastViewedAt": 100, "viewCount": 1},
+                {"ratingKey": "chapter-2", "type": "track", "title": "Two", "duration": 120000,
+                 "lastViewedAt": 200, "viewOffset": 5000}]
+        queue = [{"key": "chapter-1", "albumKey": "book-1", "duration": 60},
+                 {"key": "chapter-2", "albumKey": "book-1", "duration": 120}]
+        with mock.patch.object(player, "album_track_rows", return_value=rows), \
+             mock.patch.object(player, "prepare_collection", return_value=(queue, ["a", "b"])), \
+             mock.patch.object(player, "activate_queue", return_value={"playing": True}) as activate:
+            player.play_collection(self.config, "album", "book-1")
+        self.assertEqual(activate.call_args.kwargs["start_index"], 1)
+        self.assertEqual(activate.call_args.kwargs["start_position"], 0)
+
     def test_playing_chapter_from_search_loads_its_whole_book(self):
         with mock.patch.object(player, "mpv_running", return_value=False), \
              mock.patch.object(player, "raw_track", return_value=(self.track, "/part")), \
