@@ -96,7 +96,7 @@ class QmlContractTests(unittest.TestCase):
         self.assertIn('status.playing ? "\\uf04c  " : "\\uf04b  "', MODEL)
 
     def test_library_and_queue_navigation_are_present(self):
-        for view in ('"artists"', '"albums"', '"playlists"', '"history"', '"frequent"', '"favorites"', '"queue"'):
+        for view in ('"artists"', '"albums"', '"favorites"', '"queue"'):
             self.assertIn(view, QML)
         self.assertIn('runQueueAction("remove"', QML)
         self.assertIn('"play-next"', QML)

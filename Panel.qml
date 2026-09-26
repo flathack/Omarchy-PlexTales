@@ -59,9 +59,6 @@ Panel {
     { id: "recent", label: "New", icon: "\uf015" },
     { id: "artists", label: "Authors", icon: "\uf0c0" },
     { id: "albums", label: "Books", icon: "\uf51f" },
-    { id: "playlists", label: "Lists", icon: "\uf03a" },
-    { id: "history", label: "History", icon: "\uf1da" },
-    { id: "frequent", label: "Top", icon: "\uf201" },
     { id: "favorites", label: "Favs", icon: "\uf004" },
     { id: "queue", label: "Queue", icon: "\uf03b" }
   ]
