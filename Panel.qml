@@ -513,6 +513,8 @@ Panel {
     selectedIndex = pendingSelectedIndex >= 0
       ? Math.max(0, Math.min(items.length - 1, pendingSelectedIndex)) : 0
     pendingSelectedIndex = -1
+    if (mode === "append" && received.length > 0)
+      Qt.callLater(function() { itemList.positionViewAtIndex(root.selectedIndex, ListView.Contain) })
   }
 
   function chapterPreview(chapters, book) {
@@ -526,12 +528,14 @@ Panel {
   function toggleChapters() {
     showAllChapters = !showAllChapters
     items = showAllChapters ? allChapterItems : chapterPreview(allChapterItems, currentBookProgress)
-    selectedIndex = 0
-    Qt.callLater(function() { itemList.positionViewAtBeginning() })
+    var key = String(currentBookProgress.progressTrackKey || "")
+    selectedIndex = Math.max(0, items.findIndex(function(chapter) { return String(chapter.key) === key }))
+    Qt.callLater(function() { itemList.positionViewAtIndex(root.selectedIndex, ListView.Center) })
   }
 
   function loadMoreBooks() {
     if (loading || !hasMoreBooks || (view !== "albums" && view !== "artists")) return
+    pendingSelectedIndex = items.length
     runData("append", command(["library", view, "--limit", String(pageSize), "--offset", String(items.length)]))
   }
 
