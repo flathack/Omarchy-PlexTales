@@ -1093,7 +1093,7 @@ def start_mpv() -> None:
     recover_stale_mpv_socket()
     executable = shutil_which("mpv")
     if not executable:
-        raise PlayerError("mpv is required. Install it with: omarchy pkg add mpv")
+        raise PlayerError("mpv is required. Install it with Omarchy's package manager.")
     ensure_private_dir(CACHE_DIR)
     process = subprocess.Popen(
         [executable, "--idle=yes", "--no-video", "--audio-display=no", "--keep-open=no",

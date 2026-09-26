@@ -20,7 +20,7 @@ Create a **Music** library in Plex for audiobooks. PlexTales treats an artist as
 
 - Omarchy 4.0 or newer with the plugin-based shell
 - Python 3.10 or newer
-- `mpv` (`omarchy pkg add mpv`)
+- `mpv` (install it with Omarchy's package manager before using PlexTales)
 - Optional: `mpv-mpris` for media keys
 - Reachable Plex Media Server and account with access to a Music library containing audiobooks
 
@@ -31,6 +31,19 @@ omarchy plugin add https://github.com/flathack/Omarchy-PlexTales.git --enable
 Click the bar item, choose **Connect with Plex**, enter the server URL, and approve the sign-in in your browser. If more than one Music library exists, choose the audiobook library. Right-click the bar item for manual token setup if browser sign-in is unavailable. Never pass a Plex token on the command line.
 
 An HTTPS server URL is recommended. With HTTP, devices on the network path can observe the Plex token; use it only on a trusted private network or inside an encrypted tunnel.
+
+### Removal
+
+Stop a running sleep timer and remove the saved Plex token before uninstalling:
+
+```bash
+PLAYER="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/io.github.flathack.plextales/bin/plextales"
+"$PLAYER" sleep-timer off
+"$PLAYER" logout
+omarchy plugin remove io.github.flathack.plextales --yes
+```
+
+Uninstalling leaves the private progress and bookmark files in `${XDG_CONFIG_HOME:-$HOME/.config}/plextales/` for a future reinstall. You can delete that directory yourself if you also want to discard those records.
 
 ## Controls
 
