@@ -62,6 +62,12 @@ class QmlContractTests(unittest.TestCase):
         self.assertIn('"Left " + Model.formatTime(root.remaining)', BOOK_PROGRESS)
         self.assertIn('Accessible.role: Accessible.ProgressBar', BOOK_PROGRESS)
 
+    def test_chapter_header_can_confirm_reset_for_this_book(self):
+        self.assertIn('command(["reset-progress", currentParentKey])', QML)
+        self.assertIn('tooltipText: root.resetProgressPending ? "Confirm reset progress" : "Reset book progress"', QML)
+        self.assertIn('Click the reset button again.', QML)
+        self.assertIn('root.currentBookProgress = parsed.book', QML)
+
     def test_missing_covers_use_theme_aware_placeholder(self):
         self.assertIn("readonly property string activeThumb", QML)
         self.assertIn("id: barCover", QML)

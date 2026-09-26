@@ -51,6 +51,47 @@ class AudiobookProgressTests(unittest.TestCase):
         self.assertEqual(player.book_progress(self.config, "book-2")["position"], 100)
         self.assertEqual(len(player.continue_books(self.config, 10)), 2)
 
+    def test_reset_removes_only_selected_book_and_next_continue_starts_at_first_chapter(self):
+        player.checkpoint_progress(self.config, self.track, 240, 7200, True, 10000, 3840)
+        other = {**self.track, "key": "other-chapter", "albumKey": "book-2"}
+        player.checkpoint_progress(self.config, other, 100, 7200, True)
+        with mock.patch.object(player, "mpv_properties", return_value=None), \
+             mock.patch.object(player, "status", return_value={"playing": False}):
+            result = player.reset_book_progress(self.config, "book-1")
+        self.assertEqual(player.book_progress(self.config, "book-1"), {})
+        self.assertEqual(player.book_progress(self.config, "book-2")["position"], 100)
+        self.assertEqual([book["key"] for book in player.continue_books(self.config, 10)], ["book-2"])
+        self.assertEqual((result["book"]["progressTotal"], result["book"]["progressElapsed"],
+                          result["book"]["progressPercent"]), (10000, 0, 0))
+        queue = [{"key": "chapter-1", "albumKey": "book-1"}, self.track]
+        with mock.patch.object(player, "mpv_running", return_value=False), \
+             mock.patch.object(player, "prepare_collection", return_value=(queue, ["a", "b"])), \
+             mock.patch.object(player, "activate_queue", return_value={"playing": True}) as activate:
+            player.play_collection(self.config, "album", "book-1")
+        self.assertEqual(activate.call_args.kwargs["start_index"], 0)
+        self.assertEqual(activate.call_args.kwargs["start_position"], 0)
+
+    def test_reset_stops_only_the_selected_book_before_removing_its_bookmark(self):
+        player.checkpoint_progress(self.config, self.track, 240, 7200, True, 10000, 3840)
+        snapshot = {"playlist": [], "playlist-pos": 0, "idle-active": False}
+        state = {"queue": [self.track]}
+        with mock.patch.object(player, "mpv_properties", return_value=snapshot), \
+             mock.patch.object(player, "sync_queue_from_mpv", return_value=state), \
+             mock.patch.object(player, "shutdown_player") as shutdown, \
+             mock.patch.object(player, "status", return_value={"playing": False}):
+            player.reset_book_progress(self.config, "book-1")
+        shutdown.assert_called_once_with(self.config)
+        self.assertEqual(player.book_progress(self.config, "book-1"), {})
+
+        player.checkpoint_progress(self.config, self.track, 240, 7200, True, 10000, 3840)
+        other = {**self.track, "albumKey": "book-2"}
+        with mock.patch.object(player, "mpv_properties", return_value=snapshot), \
+             mock.patch.object(player, "sync_queue_from_mpv", return_value={"queue": [other]}), \
+             mock.patch.object(player, "shutdown_player") as shutdown, \
+             mock.patch.object(player, "status", return_value={"playing": True}):
+            player.reset_book_progress(self.config, "book-1")
+        shutdown.assert_not_called()
+
     def test_collection_play_uses_saved_chapter_and_position(self):
         player.checkpoint_progress(self.config, self.track, 3661.5, 7200, True)
         with mock.patch.object(player, "prepare_collection", return_value=([self.track], ["url"])) as prepare, \

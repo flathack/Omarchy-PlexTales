@@ -35,6 +35,7 @@ An HTTPS server URL is recommended. With HTTP, devices on the network path can o
 - Left-click the bar item to open the player; middle-click to play or pause.
 - Scroll over the bar item to jump 30 seconds; use the buttons in the player for back/forward 30 seconds.
 - Select **Resume** to continue a saved book. Opening a book and pressing **Continue book** starts from its bookmark.
+- In a book's chapter list, select **Reset book progress** beside **Continue book** and confirm with a second click to forget that book's bookmark. If that book is playing, playback stops; the next **Continue book** starts at chapter 1. Other books keep their progress.
 - Choose a chapter to play it directly. Selecting an earlier chapter moves the saved book position there.
 - Click the speed button to cycle through the available speeds.
 - Open **Help and settings** to select a full or mini player and system or local player volume.

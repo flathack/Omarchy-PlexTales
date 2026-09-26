@@ -39,7 +39,7 @@ SOCKET_FILE = CACHE_DIR / "mpv.sock"
 DATA_CACHE_DIR = CACHE_DIR / "data"
 ART_CACHE_DIR = CACHE_DIR / "art"
 APP_NAME = "PlexTales"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 PROGRESS_MAX_BYTES = 1024 * 1024
 PROGRESS_MAX_BOOKS = 1000
 PLEX_AUTH_URL = "https://plex.tv/api/v2"
@@ -1363,6 +1363,39 @@ def checkpoint_progress(config: dict[str, Any], track: dict[str, Any] | None,
         atomic_json(PROGRESS_FILE, payload, maximum=PROGRESS_MAX_BYTES)
 
 
+def reset_book_progress(config: dict[str, Any], book_key: str) -> dict[str, Any]:
+    """Forget one book's bookmark and stop that book before it can be saved again."""
+    book_key = str(book_key)
+    if not book_key or len(book_key) > 256:
+        raise PlayerError("Choose a valid audiobook to reset.", "invalid-book")
+    previous_total = safe_float(book_progress(config, book_key).get("bookTotal"))
+    with player_lock():
+        snapshot = mpv_properties(["playlist", "playlist-pos", "idle-active"])
+        if snapshot is not None and not bool(snapshot.get("idle-active")):
+            state = sync_queue_from_mpv(config, snapshot.get("playlist"), True)
+            queue = state.get("queue", []) if isinstance(state, dict) else []
+            index = safe_int(snapshot.get("playlist-pos"), -1)
+            active = queue[index] if isinstance(queue, list) and 0 <= index < len(queue) else {}
+            if str(active.get("albumKey", "")) == book_key:
+                shutdown_player(config)
+        with state_lock():
+            payload = load_json(PROGRESS_FILE, {}, PROGRESS_MAX_BYTES)
+            if not isinstance(payload, dict):
+                payload = {}
+            namespace = progress_namespace(config)
+            records = payload.get(namespace, {})
+            if isinstance(records, dict) and book_key in records:
+                records.pop(book_key)
+                payload[namespace] = records
+                atomic_json(PROGRESS_FILE, payload, maximum=PROGRESS_MAX_BYTES)
+    book = decorate_book_items(config, [{"type": "album", "key": book_key}])[0]
+    if safe_float(book.get("progressTotal")) <= 0 and previous_total > 0:
+        book.update({"progressTotal": previous_total, "progressElapsed": 0.0,
+                     "progressRemaining": previous_total, "progressPercent": 0.0,
+                     "progressChapter": "Not started", "progressPosition": 0.0})
+    return {"book": book, "status": status(config)}
+
+
 def continue_books(config: dict[str, Any], limit: int) -> list[dict[str, Any]]:
     recent_records = sorted(progress_records(config).values(),
                             key=lambda row: safe_int(row.get("updated")) if isinstance(row, dict) else 0,
@@ -2285,6 +2318,12 @@ def demo_dispatch(args: argparse.Namespace) -> Any:
         return {"thumb": "", "demo": True}
     if args.command == "queue-action":
         return demo_dispatch(argparse.Namespace(command="queue"))
+    if args.command == "reset-progress":
+        total = sum(safe_float(track.get("duration")) for track in demo_items("track"))
+        return {"book": {"type": "album", "key": args.book,
+                         "progressTotal": total, "progressElapsed": 0,
+                         "progressRemaining": total, "progressPercent": 0},
+                "status": demo_dispatch(argparse.Namespace(command="status"))}
     raise PlayerError("This action is not available in demo mode.", "demo")
 
 
@@ -2327,6 +2366,8 @@ def parser() -> argparse.ArgumentParser:
     collection_parser.add_argument("kind", choices=("album", "playlist"))
     collection_parser.add_argument("key")
     collection_parser.add_argument("--shuffle", action="store_true")
+    reset_parser = commands.add_parser("reset-progress", help="forget one audiobook's saved position")
+    reset_parser.add_argument("book")
     control_parser = commands.add_parser("control", help="control mpv")
     control_parser.add_argument("action", choices=("toggle", "next", "previous", "stop", "seek", "volume", "speed", "shuffle", "repeat"))
     control_parser.add_argument("value", nargs="?", type=float)
@@ -2398,11 +2439,19 @@ def main() -> int:
                 result["items"] = decorate_book_items(config, result["items"])
             elif args.kind == "album":
                 result["book"] = decorate_book_items(config, [{"type": "album", "key": args.key}])[0]
+                if safe_float(result["book"].get("progressTotal")) <= 0:
+                    total = sum(max(0.0, safe_float(item.get("duration"))) for item in result["items"])
+                    if total > 0:
+                        result["book"].update({"progressTotal": round(total, 2), "progressElapsed": 0.0,
+                                               "progressRemaining": round(total, 2), "progressPercent": 0.0,
+                                               "progressChapter": "Not started", "progressPosition": 0.0})
             result.update({"kind": args.kind, "key": args.key})
         elif args.command == "play":
             result = play(load_config(), args.track, args.album, args.playlist, args.shuffle)
         elif args.command == "play-collection":
             result = play_collection(load_config(), args.kind, args.key, args.shuffle)
+        elif args.command == "reset-progress":
+            result = reset_book_progress(load_config(False, include_disabled=True), args.book)
         elif args.command == "control":
             result = control(args.action, args.value)
         elif args.command == "queue":

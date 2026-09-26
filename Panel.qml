@@ -22,6 +22,7 @@ Panel {
   property string currentParentKind: ""
   property string currentParentTitle: ""
   property var currentBookProgress: ({})
+  property bool resetProgressPending: false
   property string query: ""
   property string errorText: ""
   property bool loading: false
@@ -225,6 +226,7 @@ Panel {
 
   function close() {
     controller.hide()
+    resetProgressPending = false
     pendingOpenView = false
     pendingOpenViewNeedsRetry = false
     query = ""
@@ -390,6 +392,7 @@ Panel {
   }
 
   function loadView(nextView) {
+    resetProgressPending = false
     pendingOpenView = false
     pendingOpenViewNeedsRetry = false
     suppressSearch = true
@@ -414,6 +417,7 @@ Panel {
   }
 
   function searchNow() {
+    resetProgressPending = false
     var value = query.trim()
     if (value === "") { loadView("recent"); return }
     miniSearchPending = false
@@ -426,6 +430,7 @@ Panel {
   }
 
   function openContainer(item) {
+    resetProgressPending = false
     backStack = backStack.concat([Model.navigationState(
       view, currentParentKey, currentParentKind, currentParentTitle, query, selectedIndex)])
     suppressSearch = true
@@ -441,6 +446,7 @@ Panel {
   }
 
   function goBack() {
+    resetProgressPending = false
     var previous = backStack.length > 0
       ? backStack[backStack.length - 1] : Model.navigationState("recent")
     backStack = backStack.slice(0, Math.max(0, backStack.length - 1))
@@ -545,9 +551,22 @@ Panel {
 
   function playCollection(shuffle) {
     if (currentParentKind !== "album" && currentParentKind !== "playlist") return
+    resetProgressPending = false
     var args = ["play-collection", currentParentKind, currentParentKey]
     if (shuffle) args.push("--shuffle")
     runAction(command(args))
+  }
+
+  function resetCurrentBookProgress() {
+    if (view !== "children" || currentParentKind !== "album" || !currentParentKey || resetProc.running) return
+    if (!resetProgressPending) {
+      resetProgressPending = true
+      return
+    }
+    resetProgressPending = false
+    errorText = ""
+    resetProc.command = command(["reset-progress", currentParentKey])
+    resetProc.running = true
   }
 
   function playItemCollection(item, shuffle) {
@@ -911,6 +930,29 @@ Panel {
         var nextCommand = root.pendingActions[0]
         root.pendingActions = root.pendingActions.slice(1)
         Qt.callLater(function() { root.runAction(nextCommand) })
+      }
+    }
+  }
+
+  Process {
+    id: resetProc
+    stdout: StdioCollector { id: resetOutput; waitForEnd: true }
+    stderr: StdioCollector { id: resetError; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.errorText = root.errorMessage(resetError.text, "Could not reset book progress.")
+        return
+      }
+      var parsed = root.parseJson(resetOutput.text, null)
+      if (!parsed || !parsed.book || !parsed.status) {
+        root.errorText = "Could not read the reset result."
+        return
+      }
+      root.applyStatus(JSON.stringify(parsed.status))
+      if (root.view === "children" && root.currentParentKind === "album"
+          && root.currentParentKey === String(parsed.book.key || "")) {
+        root.currentBookProgress = parsed.book
+        root.runData("children", root.command(["children", "album", root.currentParentKey]))
       }
     }
   }
@@ -2163,6 +2205,18 @@ Panel {
           onClicked: root.playCollection(false)
         }
         PanelActionButton {
+          visible: root.view === "children" && root.currentParentKind === "album"
+            && Number(root.currentBookProgress.progressElapsed || 0) > 0
+          enabled: !resetProc.running
+          iconText: root.resetProgressPending ? "\uf00c" : "\uf0e2"
+          tooltipText: root.resetProgressPending ? "Confirm reset progress" : "Reset book progress"
+          foreground: root.resetProgressPending ? Color.urgent : root.foreground
+          fontFamily: root.fontFamily
+          bordered: root.resetProgressPending
+          focusable: true; Accessible.name: tooltipText
+          onClicked: root.resetCurrentBookProgress()
+        }
+        PanelActionButton {
           visible: root.view === "queue" && root.items.length > 0
           iconText: "\uf2ed"; tooltipText: "Clear upcoming"; foreground: root.foreground; fontFamily: root.fontFamily
           focusable: true; Accessible.name: tooltipText
@@ -2198,6 +2252,17 @@ Panel {
           muted: root.dim
           fontFamily: root.fontFamily
         }
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        visible: root.resetProgressPending && root.view === "children" && root.currentParentKind === "album"
+        width: parent.width
+        text: "Reset this book to chapter 1? Click the reset button again."
+        color: Color.urgent
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        wrapMode: Text.WordWrap
       }
 
       Text {
